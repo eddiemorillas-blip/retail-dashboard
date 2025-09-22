@@ -595,7 +595,7 @@ def main() -> None:
         total_records = len(df)
         if "disp_category" in df.columns:
             unique_categories = df["disp_category"].nunique()
-            if unique_categories < len(df_original["disp_category"].nunique()):
+            if unique_categories < df_original["disp_category"].nunique():
                 st.info(f"📊 Analyzing {total_records:,} transactions across {unique_categories} selected categories")
             else:
                 st.info(f"📊 Analyzing {total_records:,} transactions across all categories")
