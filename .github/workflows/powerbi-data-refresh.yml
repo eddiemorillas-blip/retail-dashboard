@@ -1,0 +1,55 @@
+name: Power BI Data Refresh
+
+on:
+  schedule:
+    # Run every 4 hours
+    - cron: '0 */4 * * *'
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  refresh-powerbi-data:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install pandas numpy openpyxl requests
+
+    - name: Run Power BI data refresh
+      env:
+        SHAREPOINT_URL: ${{ secrets.SHAREPOINT_URL }}
+      run: |
+        python scripts/powerbi_auto_refresh.py
+
+    - name: Upload Power BI data artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: powerbi-data-${{ github.run_number }}
+        path: powerbi_data/
+        retention-days: 30
+
+    - name: Check for changes
+      id: changes
+      run: |
+        if [ -d "powerbi_data" ]; then
+          echo "data_ready=true" >> $GITHUB_OUTPUT
+        else
+          echo "data_ready=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Commit updated data
+      if: steps.changes.outputs.data_ready == 'true'
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add powerbi_data/
+        git commit -m "Auto-update: Power BI data refresh $(date)" || exit 0
+        git push

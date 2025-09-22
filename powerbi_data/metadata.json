@@ -1,0 +1,21 @@
+{
+  "export_timestamp": "2025-09-17T12:43:35.029515",
+  "purchases_count": 122461,
+  "checkins_count": 40000,
+  "date_range": {
+    "start": "2024-10-10T11:43:15",
+    "end": "2025-09-16T00:19:47"
+  },
+  "files_exported": [
+    "purchases_enhanced.csv",
+    "checkins_enhanced.csv",
+    "kpis.csv",
+    "hourly_sales.csv",
+    "daily_sales.csv",
+    "top_vendors.csv",
+    "top_customers.csv",
+    "top_locations.csv",
+    "vendor_performance.csv",
+    "customer_performance.csv"
+  ]
+}
