@@ -875,6 +875,110 @@ def main() -> None:
                         for insight in insights:
                             st.write(insight)
 
+            # Member Bennies Analysis
+            if "revenue_subcategory" in df_yoy.columns:
+                member_bennies_data = df_yoy[df_yoy["revenue_subcategory"].str.contains("Member Bennies", case=False, na=False)]
+
+                if len(member_bennies_data) > 0:
+                    st.subheader("Member Bennies Impact Analysis")
+
+                    # YTD Member Bennies comparison
+                    member_bennies_ytd = member_bennies_data[
+                        (member_bennies_data[date_col].dt.month < current_month) |
+                        ((member_bennies_data[date_col].dt.month == current_month) & (member_bennies_data[date_col].dt.day <= current_day))
+                    ]
+
+                    bennies_by_year = member_bennies_ytd.groupby('year').agg({
+                        'purchase_price_w_discount': ['sum', 'count', 'mean'],
+                        cost_col: 'sum' if cost_col in member_bennies_ytd.columns else lambda x: 0
+                    }).round(2)
+
+                    bennies_by_year.columns = ['Total_Bennies_Value', 'Bennies_Count', 'Avg_Bennie_Value', 'Total_Bennies_Cost']
+                    bennies_by_year['Bennies_Profit_Impact'] = bennies_by_year['Total_Bennies_Value'] - bennies_by_year['Total_Bennies_Cost']
+
+                    st.write("**Member Bennies YTD Comparison:**")
+                    st.dataframe(
+                        bennies_by_year.style.format({
+                            'Total_Bennies_Value': '${:,.0f}',
+                            'Bennies_Count': '{:,.0f}',
+                            'Avg_Bennie_Value': '${:.2f}',
+                            'Total_Bennies_Cost': '${:,.0f}',
+                            'Bennies_Profit_Impact': '${:,.0f}'
+                        }),
+                        use_container_width=True
+                    )
+
+                    # Calculate changes if we have multiple years
+                    years = sorted(bennies_by_year.index.tolist())
+                    if len(years) >= 2:
+                        latest_year = years[-1]
+                        previous_year = years[-2]
+
+                        bennies_value_change = bennies_by_year.loc[latest_year, 'Total_Bennies_Value'] - bennies_by_year.loc[previous_year, 'Total_Bennies_Value']
+                        bennies_count_change = bennies_by_year.loc[latest_year, 'Bennies_Count'] - bennies_by_year.loc[previous_year, 'Bennies_Count']
+                        bennies_profit_impact_change = bennies_by_year.loc[latest_year, 'Bennies_Profit_Impact'] - bennies_by_year.loc[previous_year, 'Bennies_Profit_Impact']
+
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Bennies Value Change", f"${bennies_value_change:+,.0f}")
+                        with col2:
+                            st.metric("Bennies Count Change", f"{bennies_count_change:+,.0f}")
+                        with col3:
+                            st.metric("Bennies Profit Impact Change", f"${bennies_profit_impact_change:+,.0f}")
+
+                        # Member Bennies insights
+                        st.write("**Member Bennies Impact on Profitability:**")
+
+                        # Calculate as percentage of total business
+                        total_revenue_current = year_analysis.loc[latest_year, 'Total_Revenue'] if latest_year in year_analysis.index else 0
+                        total_revenue_previous = year_analysis.loc[previous_year, 'Total_Revenue'] if previous_year in year_analysis.index else 0
+
+                        if total_revenue_current > 0:
+                            bennies_pct_current = (bennies_by_year.loc[latest_year, 'Total_Bennies_Value'] / total_revenue_current) * 100
+                            bennies_pct_previous = (bennies_by_year.loc[previous_year, 'Total_Bennies_Value'] / total_revenue_previous) * 100 if total_revenue_previous > 0 else 0
+
+                            st.write(f"• **{previous_year}**: Member Bennies were {bennies_pct_previous:.1f}% of total revenue")
+                            st.write(f"• **{latest_year}**: Member Bennies are {bennies_pct_current:.1f}% of total revenue")
+
+                            if bennies_value_change > 1000:
+                                st.write(f"🔴 **Increased Member Bennies usage** - ${bennies_value_change:,.0f} more in bennies redeemed")
+                                st.write("   This directly reduces profitability as bennies represent discounts/rewards")
+                            elif bennies_value_change < -1000:
+                                st.write(f"🟢 **Decreased Member Bennies usage** - ${abs(bennies_value_change):,.0f} less in bennies redeemed")
+                                st.write("   This should improve profitability")
+
+                            if bennies_count_change > 100:
+                                st.write(f"📈 **More members using bennies** - {bennies_count_change:+,.0f} more redemptions")
+                            elif bennies_count_change < -100:
+                                st.write(f"📉 **Fewer members using bennies** - {abs(bennies_count_change):,.0f} fewer redemptions")
+
+                    # Monthly trend for Member Bennies
+                    st.subheader("Member Bennies Monthly Trend")
+
+                    monthly_bennies = member_bennies_data.copy()
+                    monthly_bennies['year_month'] = monthly_bennies[date_col].dt.to_period('M').astype(str)
+                    monthly_bennies['month'] = monthly_bennies[date_col].dt.month
+
+                    monthly_bennies_agg = monthly_bennies.groupby(['year', 'month', 'year_month']).agg({
+                        'purchase_price_w_discount': 'sum'
+                    }).reset_index()
+
+                    if len(monthly_bennies_agg) > 0:
+                        fig_bennies_trend = px.line(
+                            monthly_bennies_agg,
+                            x='year_month',
+                            y='purchase_price_w_discount',
+                            color='year',
+                            title='Monthly Member Bennies Value by Year',
+                            labels={'purchase_price_w_discount': 'Bennies Value ($)', 'year_month': 'Month', 'year': 'Year'},
+                            markers=True
+                        )
+                        fig_bennies_trend.update_layout(
+                            xaxis_tickangle=-45,
+                            yaxis_tickformat='$,.0f'
+                        )
+                        st.plotly_chart(fig_bennies_trend, use_container_width=True)
+
         else:
             st.info("Need data from multiple quarters to show year-over-year comparison")
 
