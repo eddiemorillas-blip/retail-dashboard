@@ -673,7 +673,88 @@ def main() -> None:
                     comparison_df = comparison_df.replace([float('inf'), -float('inf')], 0)
                     comparison_df = comparison_df.fillna(0)
 
-                    # Display formatted table
+                    # Add bar charts for visual comparison
+                    st.subheader("Visual Year-over-Year Comparison")
+
+                    chart_col1, chart_col2 = st.columns(2)
+
+                    with chart_col1:
+                        # Profit comparison bar chart
+                        profit_comparison = pd.DataFrame({
+                            'Quarter': comparison_df['Quarter'].tolist() + comparison_df['Quarter'].tolist(),
+                            'Year': [str(previous_year)] * 4 + [str(current_year)] * 4,
+                            'Profit': comparison_df[f'{previous_year} Profit'].tolist() + comparison_df[f'{current_year} Profit'].tolist()
+                        })
+
+                        fig_profit_bar = px.bar(
+                            profit_comparison,
+                            x='Quarter',
+                            y='Profit',
+                            color='Year',
+                            barmode='group',
+                            title=f'Quarterly Profit: {previous_year} vs {current_year}',
+                            labels={'Profit': 'Profit ($)'},
+                            color_discrete_sequence=['#1f77b4', '#ff7f0e']
+                        )
+                        fig_profit_bar.update_layout(yaxis_tickformat='$,.0f')
+                        st.plotly_chart(fig_profit_bar, use_container_width=True)
+
+                    with chart_col2:
+                        # Profit margin comparison bar chart
+                        margin_comparison = pd.DataFrame({
+                            'Quarter': comparison_df['Quarter'].tolist() + comparison_df['Quarter'].tolist(),
+                            'Year': [str(previous_year)] * 4 + [str(current_year)] * 4,
+                            'Profit Margin': comparison_df[f'{previous_year} Margin %'].tolist() + comparison_df[f'{current_year} Margin %'].tolist()
+                        })
+
+                        fig_margin_bar = px.bar(
+                            margin_comparison,
+                            x='Quarter',
+                            y='Profit Margin',
+                            color='Year',
+                            barmode='group',
+                            title=f'Quarterly Profit Margin: {previous_year} vs {current_year}',
+                            labels={'Profit Margin': 'Profit Margin (%)'},
+                            color_discrete_sequence=['#1f77b4', '#ff7f0e']
+                        )
+                        fig_margin_bar.update_layout(yaxis_tickformat='.1f')
+                        st.plotly_chart(fig_margin_bar, use_container_width=True)
+
+                    # Change visualization
+                    st.subheader("Quarterly Changes Visualization")
+
+                    change_col1, change_col2 = st.columns(2)
+
+                    with change_col1:
+                        # Profit change by quarter
+                        fig_profit_change = px.bar(
+                            comparison_df,
+                            x='Quarter',
+                            y='Profit Change $',
+                            title='Profit Change by Quarter ($)',
+                            labels={'Profit Change $': 'Profit Change ($)'},
+                            color='Profit Change $',
+                            color_continuous_scale='RdYlGn'
+                        )
+                        fig_profit_change.update_layout(yaxis_tickformat='$,.0f')
+                        st.plotly_chart(fig_profit_change, use_container_width=True)
+
+                    with change_col2:
+                        # Margin change by quarter
+                        fig_margin_change = px.bar(
+                            comparison_df,
+                            x='Quarter',
+                            y='Margin Change',
+                            title='Profit Margin Change by Quarter (pp)',
+                            labels={'Margin Change': 'Margin Change (percentage points)'},
+                            color='Margin Change',
+                            color_continuous_scale='RdYlGn'
+                        )
+                        fig_margin_change.update_layout(yaxis_tickformat='.1f')
+                        st.plotly_chart(fig_margin_change, use_container_width=True)
+
+                    # Display formatted table after charts
+                    st.subheader("Detailed Year-over-Year Comparison Table")
                     st.dataframe(
                         comparison_df.style.format({
                             f'{previous_year} Profit': '${:,.0f}',
