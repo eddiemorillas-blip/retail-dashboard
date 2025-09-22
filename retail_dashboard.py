@@ -885,10 +885,20 @@ def main() -> None:
             # Member Bennies Analysis - Always show this section
             st.subheader("Member Bennies Impact Analysis")
 
-            if "revenue_subcategory" in df_yoy.columns:
+            if "revenue_subcategory" in df_yoy.columns and "invoice_id" in df_yoy.columns:
+                # Find all Member Bennies line items
                 member_bennies_data = df_yoy[df_yoy["revenue_subcategory"].str.contains("Member Bennies", case=False, na=False)]
 
-                if len(member_bennies_data) > 0:
+                # Find invoices that used Member Bennies
+                bennies_invoice_ids = member_bennies_data['invoice_id'].unique() if len(member_bennies_data) > 0 else []
+
+                # Find Food transactions that used Member Bennies (same invoice as Member Bennies)
+                food_with_bennies = df_yoy[
+                    (df_yoy['disp_category'] == 'Food') &
+                    (df_yoy['invoice_id'].isin(bennies_invoice_ids))
+                ] if len(bennies_invoice_ids) > 0 else pd.DataFrame()
+
+                if len(member_bennies_data) > 0 or len(food_with_bennies) > 0:
                     # Show data context with specific category information
                     if "disp_category" in df.columns:
                         unique_categories = df["disp_category"].nunique()
@@ -1101,12 +1111,112 @@ def main() -> None:
                             # Impact interpretation
                             if rate_change > 2 and bennies_value_change < -1000:
                                 st.write("🔴 **Double impact on profitability**: More customers using bennies AND higher usage per customer")
+
+                    # Cross-Category Analysis: Food Purchases that Used Member Bennies
+                    if len(food_with_bennies) > 0:
+                        st.subheader("Food Purchases Using Member Bennies")
+
+                        # Show context for this analysis
+                        if "disp_category" in df.columns:
+                            unique_categories = df["disp_category"].nunique()
+                            if unique_categories < df_original["disp_category"].nunique():
+                                st.info("📊 Analysis of Food purchases that used Member Bennies (from filtered categories)")
+                            else:
+                                st.info("📊 Analysis of Food purchases that used Member Bennies (all data)")
+
+                        # YTD Food purchases with Member Bennies
+                        food_bennies_ytd = food_with_bennies[
+                            (food_with_bennies[date_col].dt.month < current_month) |
+                            ((food_with_bennies[date_col].dt.month == current_month) & (food_with_bennies[date_col].dt.day <= current_day))
+                        ]
+
+                        if len(food_bennies_ytd) > 0:
+                            food_bennies_by_year = food_bennies_ytd.groupby('year').agg({
+                                'purchase_price_w_discount': ['sum', 'count', 'mean'],
+                                'invoice_id': 'nunique'
+                            }).round(2)
+
+                            food_bennies_by_year.columns = ['Food_Value_with_Bennies', 'Food_Items_Count', 'Avg_Food_Item_Value', 'Food_Invoices_with_Bennies']
+
+                            st.write("**Food Purchases Using Member Bennies (YTD):**")
+                            st.dataframe(
+                                food_bennies_by_year.style.format({
+                                    'Food_Value_with_Bennies': '${:,.0f}',
+                                    'Food_Items_Count': '{:,.0f}',
+                                    'Avg_Food_Item_Value': '${:.2f}',
+                                    'Food_Invoices_with_Bennies': '{:,.0f}'
+                                }),
+                                use_container_width=True
+                            )
+
+                            # Calculate Food penetration rate for Member Bennies usage
+                            years = sorted(food_bennies_by_year.index.tolist())
+                            if len(years) >= 2:
+                                latest_year = years[-1]
+                                previous_year = years[-2]
+
+                                # Get total Food transactions for comparison
+                                total_food_ytd = df_yoy[
+                                    (df_yoy['disp_category'] == 'Food') &
+                                    ((df_yoy[date_col].dt.month < current_month) |
+                                     ((df_yoy[date_col].dt.month == current_month) & (df_yoy[date_col].dt.day <= current_day)))
+                                ]
+
+                                if len(total_food_ytd) > 0:
+                                    total_food_by_year = total_food_ytd.groupby('year').agg({
+                                        'invoice_id': 'nunique',
+                                        'purchase_price_w_discount': 'sum'
+                                    })
+
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        if latest_year in total_food_by_year.index:
+                                            total_food_invoices_current = total_food_by_year.loc[latest_year, 'invoice_id']
+                                            food_bennies_invoices_current = food_bennies_by_year.loc[latest_year, 'Food_Invoices_with_Bennies']
+                                            food_penetration_current = (food_bennies_invoices_current / total_food_invoices_current * 100) if total_food_invoices_current > 0 else 0
+
+                                            st.metric(
+                                                f"{latest_year} Food + Bennies Rate",
+                                                f"{food_penetration_current:.1f}%",
+                                                help="Percentage of Food transactions that used Member Bennies"
+                                            )
+
+                                    with col2:
+                                        if previous_year in total_food_by_year.index:
+                                            total_food_invoices_previous = total_food_by_year.loc[previous_year, 'invoice_id']
+                                            food_bennies_invoices_previous = food_bennies_by_year.loc[previous_year, 'Food_Invoices_with_Bennies']
+                                            food_penetration_previous = (food_bennies_invoices_previous / total_food_invoices_previous * 100) if total_food_invoices_previous > 0 else 0
+
+                                            penetration_change = food_penetration_current - food_penetration_previous
+
+                                            st.metric(
+                                                "Penetration Change",
+                                                f"{penetration_change:+.1f}pp",
+                                                help="Change in Food + Member Bennies penetration rate"
+                                            )
+
+                                            # Insights
+                                            st.write("**Food + Member Bennies Insights:**")
+                                            if penetration_change > 1:
+                                                st.write(f"📈 **More Food customers using Member Bennies** - {penetration_change:.1f}pp increase")
+                                            elif penetration_change < -1:
+                                                st.write(f"📉 **Fewer Food customers using Member Bennies** - {abs(penetration_change):.1f}pp decrease")
+
+                                            if food_penetration_current > 10:
+                                                st.write(f"🎯 **Good Member Bennies adoption in Food** - {food_penetration_current:.1f}% of Food transactions use bennies")
+                                            elif food_penetration_current < 5:
+                                                st.write(f"⚠️ **Low Member Bennies adoption in Food** - Only {food_penetration_current:.1f}% of Food transactions use bennies")
+
                 else:
                     if "disp_category" in df.columns:
                         unique_categories = df["disp_category"].nunique()
                         if unique_categories < df_original["disp_category"].nunique():
                             selected_categories = sorted(df["disp_category"].unique())
-                            st.info(f"ℹ️ No Member Bennies data found in the {unique_categories} selected categories: {', '.join(selected_categories)}")
+                            if 'Food' in selected_categories and 'ProShop' not in selected_categories:
+                                st.info(f"ℹ️ Member Bennies only exist in ProShop category, but you've selected: {', '.join(selected_categories)}")
+                                st.info("💡 **Tip**: Select 'ProShop' category or 'All Categories' to see Member Bennies analysis")
+                            else:
+                                st.info(f"ℹ️ No Member Bennies data found in the {unique_categories} selected categories: {', '.join(selected_categories)}")
                         else:
                             st.info("ℹ️ No Member Bennies data found in the current data")
                     else:
