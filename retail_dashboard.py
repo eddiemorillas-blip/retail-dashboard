@@ -630,9 +630,8 @@ def main() -> None:
                     monthly_profit,
                     x='year_month',
                     y='profit',
-                    color='year',
-                    title='Monthly Profit Trend by Year',
-                    labels={'profit': 'Profit ($)', 'year_month': 'Month', 'year': 'Year'},
+                    title='Monthly Profit Trend',
+                    labels={'profit': 'Profit ($)', 'year_month': 'Month'},
                     markers=True
                 )
                 fig_profit_trend.update_layout(
@@ -647,9 +646,8 @@ def main() -> None:
                     monthly_profit,
                     x='year_month',
                     y='profit_margin',
-                    color='year',
-                    title='Monthly Profit Margin Trend by Year',
-                    labels={'profit_margin': 'Profit Margin (%)', 'year_month': 'Month', 'year': 'Year'},
+                    title='Monthly Profit Margin Trend',
+                    labels={'profit_margin': 'Profit Margin (%)', 'year_month': 'Month'},
                     markers=True
                 )
                 fig_margin_trend.update_layout(
@@ -971,9 +969,8 @@ def main() -> None:
                             monthly_bennies_agg,
                             x='year_month',
                             y='purchase_price_w_discount',
-                            color='year',
-                            title='Monthly Member Bennies Value by Year',
-                            labels={'purchase_price_w_discount': 'Bennies Value ($)', 'year_month': 'Month', 'year': 'Year'},
+                            title='Monthly Member Bennies Value Trend',
+                            labels={'purchase_price_w_discount': 'Bennies Value ($)', 'year_month': 'Month'},
                             markers=True
                         )
                         fig_bennies_trend.update_layout(
