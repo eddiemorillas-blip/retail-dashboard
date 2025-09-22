@@ -785,10 +785,24 @@ def main() -> None:
                     )
 
                     # Diagnostic Analysis for Profitability Changes
-                    st.subheader("Profitability Change Analysis")
+                    st.subheader("Profitability Change Analysis (Year-to-Date Comparison)")
 
-                    # Calculate key metrics by year
-                    year_analysis = df_yoy.groupby('year').agg({
+                    # Get current date info for YTD comparison
+                    current_date = df_yoy[date_col].max()
+                    current_year = current_date.year
+                    current_month = current_date.month
+                    current_day = current_date.day
+
+                    # Filter data for YTD comparison (same date range for all years)
+                    df_ytd = df_yoy[
+                        (df_yoy[date_col].dt.month < current_month) |
+                        ((df_yoy[date_col].dt.month == current_month) & (df_yoy[date_col].dt.day <= current_day))
+                    ].copy()
+
+                    st.write(f"*Comparing same time period through {current_date.strftime('%B %d')} for each year*")
+
+                    # Calculate key metrics by year (YTD)
+                    year_analysis = df_ytd.groupby('year').agg({
                         'purchase_price_w_discount': ['sum', 'mean', 'count'],
                         cost_col: ['sum', 'mean'],
                     }).round(2)
