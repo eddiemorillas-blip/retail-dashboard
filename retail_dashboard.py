@@ -587,6 +587,110 @@ def main() -> None:
 
     st.markdown("---")
 
+    # Year-over-Year Profitability Comparison by Quarter
+    if cost_col and date_col and "purchase_price_w_discount" in df.columns:
+        st.subheader("Year-over-Year Profitability by Quarter")
+
+        # Prepare data for YoY comparison
+        df_yoy = df.copy()
+        df_yoy['year'] = df_yoy[date_col].dt.year
+        df_yoy['quarter'] = df_yoy[date_col].dt.quarter
+        df_yoy['year_quarter'] = df_yoy['year'].astype(str) + ' Q' + df_yoy['quarter'].astype(str)
+
+        # Calculate quarterly profit metrics
+        quarterly_profit = df_yoy.groupby(['year', 'quarter', 'year_quarter']).agg({
+            'purchase_price_w_discount': 'sum',
+            cost_col: 'sum'
+        }).reset_index()
+
+        quarterly_profit['profit'] = quarterly_profit['purchase_price_w_discount'] - quarterly_profit[cost_col]
+        quarterly_profit['profit_margin'] = (quarterly_profit['profit'] / quarterly_profit['purchase_price_w_discount'] * 100).round(2)
+
+        if len(quarterly_profit) >= 2:  # Need at least 2 data points
+            # Create visualizations
+            col1, col2 = st.columns(2)
+
+            with col1:
+                # Quarterly profit trend
+                fig_profit_trend = px.line(
+                    quarterly_profit,
+                    x='year_quarter',
+                    y='profit',
+                    title='Quarterly Profit Trend',
+                    labels={'profit': 'Profit ($)', 'year_quarter': 'Quarter'},
+                    markers=True
+                )
+                fig_profit_trend.update_layout(
+                    xaxis_tickangle=-45,
+                    yaxis_tickformat='$,.0f'
+                )
+                st.plotly_chart(fig_profit_trend, use_container_width=True)
+
+            with col2:
+                # Quarterly profit margin trend
+                fig_margin_trend = px.line(
+                    quarterly_profit,
+                    x='year_quarter',
+                    y='profit_margin',
+                    title='Quarterly Profit Margin Trend',
+                    labels={'profit_margin': 'Profit Margin (%)', 'year_quarter': 'Quarter'},
+                    markers=True
+                )
+                fig_margin_trend.update_layout(
+                    xaxis_tickangle=-45,
+                    yaxis_tickformat='.1f'
+                )
+                st.plotly_chart(fig_margin_trend, use_container_width=True)
+
+            # Year-over-Year comparison table
+            if len(quarterly_profit['year'].unique()) >= 2:
+                st.subheader("Year-over-Year Quarterly Comparison")
+
+                # Pivot for YoY comparison
+                profit_pivot = quarterly_profit.pivot(index='quarter', columns='year', values='profit').fillna(0)
+                margin_pivot = quarterly_profit.pivot(index='quarter', columns='year', values='profit_margin').fillna(0)
+
+                # Calculate YoY changes for most recent years
+                years = sorted(profit_pivot.columns)
+                if len(years) >= 2:
+                    current_year = years[-1]
+                    previous_year = years[-2]
+
+                    comparison_df = pd.DataFrame({
+                        'Quarter': ['Q1', 'Q2', 'Q3', 'Q4'],
+                        f'{previous_year} Profit': [profit_pivot.loc[i, previous_year] if i in profit_pivot.index else 0 for i in [1,2,3,4]],
+                        f'{current_year} Profit': [profit_pivot.loc[i, current_year] if i in profit_pivot.index else 0 for i in [1,2,3,4]],
+                        f'{previous_year} Margin %': [margin_pivot.loc[i, previous_year] if i in margin_pivot.index else 0 for i in [1,2,3,4]],
+                        f'{current_year} Margin %': [margin_pivot.loc[i, current_year] if i in margin_pivot.index else 0 for i in [1,2,3,4]]
+                    })
+
+                    # Calculate changes
+                    comparison_df['Profit Change $'] = comparison_df[f'{current_year} Profit'] - comparison_df[f'{previous_year} Profit']
+                    comparison_df['Profit Change %'] = ((comparison_df[f'{current_year} Profit'] / comparison_df[f'{previous_year} Profit'] - 1) * 100).round(1)
+                    comparison_df['Margin Change'] = comparison_df[f'{current_year} Margin %'] - comparison_df[f'{previous_year} Margin %']
+
+                    # Replace inf and NaN values
+                    comparison_df = comparison_df.replace([float('inf'), -float('inf')], 0)
+                    comparison_df = comparison_df.fillna(0)
+
+                    # Display formatted table
+                    st.dataframe(
+                        comparison_df.style.format({
+                            f'{previous_year} Profit': '${:,.0f}',
+                            f'{current_year} Profit': '${:,.0f}',
+                            f'{previous_year} Margin %': '{:.1f}%',
+                            f'{current_year} Margin %': '{:.1f}%',
+                            'Profit Change $': '${:,.0f}',
+                            'Profit Change %': '{:.1f}%',
+                            'Margin Change': '{:.1f}pp'
+                        }),
+                        use_container_width=True
+                    )
+        else:
+            st.info("Need data from multiple quarters to show year-over-year comparison")
+
+    st.markdown("---")
+
     # Sales by Time of Day Analysis
     st.subheader("Sales by Time of Day")
 
