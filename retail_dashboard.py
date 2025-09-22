@@ -589,9 +589,18 @@ def main() -> None:
 
     # Year-over-Year Profitability Comparison by Quarter
     if cost_col and date_col and "purchase_price_w_discount" in df.columns:
-        st.subheader("Year-over-Year Profitability by Quarter")
+        st.subheader("Year-over-Year Profitability Analysis")
 
-        # Prepare data for YoY comparison
+        # Show data context (filtered categories/locations)
+        total_records = len(df)
+        if "disp_category" in df.columns:
+            unique_categories = df["disp_category"].nunique()
+            if unique_categories < len(df_original["disp_category"].nunique()):
+                st.info(f"📊 Analyzing {total_records:,} transactions across {unique_categories} selected categories")
+            else:
+                st.info(f"📊 Analyzing {total_records:,} transactions across all categories")
+
+        # Prepare data for YoY comparison (uses filtered data)
         df_yoy = df.copy()
         df_yoy['year'] = df_yoy[date_col].dt.year
         df_yoy['quarter'] = df_yoy[date_col].dt.quarter
@@ -879,6 +888,9 @@ def main() -> None:
 
                 if len(member_bennies_data) > 0:
                     st.subheader("Member Bennies Impact Analysis")
+
+                    # Show that this analysis uses the same filtered data
+                    st.caption("💡 This analysis uses the same category/location filters as above")
 
                     # YTD Member Bennies comparison
                     member_bennies_ytd = member_bennies_data[
