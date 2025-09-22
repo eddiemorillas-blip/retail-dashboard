@@ -889,8 +889,16 @@ def main() -> None:
                 if len(member_bennies_data) > 0:
                     st.subheader("Member Bennies Impact Analysis")
 
-                    # Show that this analysis uses the same filtered data
-                    st.caption("💡 This analysis uses the same category/location filters as above")
+                    # Show data context with specific category information
+                    if "disp_category" in df.columns:
+                        unique_categories = df["disp_category"].nunique()
+                        if unique_categories < df_original["disp_category"].nunique():
+                            selected_categories = sorted(df["disp_category"].unique())
+                            st.info(f"📊 Member Bennies analysis for {unique_categories} selected categories: {', '.join(selected_categories)}")
+                        else:
+                            st.info("📊 Member Bennies analysis across all categories")
+                    else:
+                        st.caption("💡 This analysis uses the same category/location filters as above")
 
                     # YTD Member Bennies comparison
                     member_bennies_ytd = member_bennies_data[
@@ -995,6 +1003,14 @@ def main() -> None:
                     if 'invoice_id' in df_yoy.columns:
                         st.subheader("Member Bennies Transaction Penetration")
 
+                        # Show context for penetration analysis
+                        if "disp_category" in df.columns:
+                            unique_categories = df["disp_category"].nunique()
+                            if unique_categories < df_original["disp_category"].nunique():
+                                st.caption(f"🎯 Penetration rates calculated from transactions in {unique_categories} selected categories only")
+                            else:
+                                st.caption("🎯 Penetration rates calculated from all transactions")
+
                         # Get YTD data for both bennies and total transactions
                         ytd_data = df_yoy[
                             (df_yoy[date_col].dt.month < current_month) |
@@ -1085,6 +1101,17 @@ def main() -> None:
                             # Impact interpretation
                             if rate_change > 2 and bennies_value_change < -1000:
                                 st.write("🔴 **Double impact on profitability**: More customers using bennies AND higher usage per customer")
+                else:
+                    st.subheader("Member Bennies Impact Analysis")
+                    if "disp_category" in df.columns:
+                        unique_categories = df["disp_category"].nunique()
+                        if unique_categories < df_original["disp_category"].nunique():
+                            selected_categories = sorted(df["disp_category"].unique())
+                            st.info(f"ℹ️ No Member Bennies data found in the {unique_categories} selected categories: {', '.join(selected_categories)}")
+                        else:
+                            st.info("ℹ️ No Member Bennies data found in the current data")
+                    else:
+                        st.info("ℹ️ No Member Bennies data found in the current filtered data")
 
         else:
             st.info("Need data from multiple quarters to show year-over-year comparison")
