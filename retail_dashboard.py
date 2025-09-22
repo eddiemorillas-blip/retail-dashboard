@@ -982,6 +982,101 @@ def main() -> None:
                         )
                         st.plotly_chart(fig_bennies_trend, use_container_width=True)
 
+                    # Transaction penetration analysis
+                    if 'invoice_id' in df_yoy.columns:
+                        st.subheader("Member Bennies Transaction Penetration")
+
+                        # Get YTD data for both bennies and total transactions
+                        ytd_data = df_yoy[
+                            (df_yoy[date_col].dt.month < current_month) |
+                            ((df_yoy[date_col].dt.month == current_month) & (df_yoy[date_col].dt.day <= current_day))
+                        ]
+
+                        penetration_by_year = {}
+
+                        for year in sorted(ytd_data['year'].unique()):
+                            year_data = ytd_data[ytd_data['year'] == year]
+
+                            # Total unique invoices for the year
+                            total_invoices = year_data['invoice_id'].nunique()
+
+                            # Unique invoices that used Member Bennies
+                            bennies_invoices = year_data[
+                                year_data["revenue_subcategory"].str.contains("Member Bennies", case=False, na=False)
+                            ]['invoice_id'].nunique()
+
+                            # Calculate penetration rate
+                            penetration_rate = (bennies_invoices / total_invoices * 100) if total_invoices > 0 else 0
+
+                            penetration_by_year[year] = {
+                                'Total_Invoices': total_invoices,
+                                'Bennies_Invoices': bennies_invoices,
+                                'Penetration_Rate': penetration_rate
+                            }
+
+                        # Create DataFrame for display
+                        penetration_df = pd.DataFrame.from_dict(penetration_by_year, orient='index')
+                        penetration_df.index.name = 'Year'
+
+                        st.write("**Member Bennies Transaction Penetration Rate (YTD):**")
+                        st.dataframe(
+                            penetration_df.style.format({
+                                'Total_Invoices': '{:,.0f}',
+                                'Bennies_Invoices': '{:,.0f}',
+                                'Penetration_Rate': '{:.1f}%'
+                            }),
+                            use_container_width=True
+                        )
+
+                        # Show penetration changes if multiple years
+                        years = sorted(penetration_df.index.tolist())
+                        if len(years) >= 2:
+                            latest_year = years[-1]
+                            previous_year = years[-2]
+
+                            current_rate = penetration_df.loc[latest_year, 'Penetration_Rate']
+                            previous_rate = penetration_df.loc[previous_year, 'Penetration_Rate']
+                            rate_change = current_rate - previous_rate
+
+                            current_bennies_invoices = penetration_df.loc[latest_year, 'Bennies_Invoices']
+                            previous_bennies_invoices = penetration_df.loc[previous_year, 'Bennies_Invoices']
+                            invoices_change = current_bennies_invoices - previous_bennies_invoices
+
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.metric(
+                                    f"{latest_year} Penetration Rate",
+                                    f"{current_rate:.1f}%",
+                                    delta=f"{rate_change:+.1f}pp"
+                                )
+                            with col2:
+                                st.metric(
+                                    "Bennies Transactions Change",
+                                    f"{current_bennies_invoices:,.0f}",
+                                    delta=f"{invoices_change:+,.0f}"
+                                )
+
+                            # Insights about penetration
+                            st.write("**Transaction Penetration Insights:**")
+
+                            if rate_change > 2:
+                                st.write(f"📈 **Higher member engagement** - {rate_change:.1f}pp more transactions used bennies")
+                                st.write("   More customers are taking advantage of member benefits")
+                            elif rate_change < -2:
+                                st.write(f"📉 **Lower member engagement** - {rate_change:.1f}pp fewer transactions used bennies")
+                                st.write("   Fewer customers are using member benefits")
+
+                            if current_rate > 15:
+                                st.write(f"🎯 **High penetration rate** - {current_rate:.1f}% of transactions use bennies")
+                                st.write("   Strong member engagement with benefits program")
+                            elif current_rate < 5:
+                                st.write(f"⚠️ **Low penetration rate** - Only {current_rate:.1f}% of transactions use bennies")
+                                st.write("   Opportunity to increase member benefit awareness/usage")
+
+                            # Impact interpretation
+                            if rate_change > 2 and bennies_value_change < -1000:
+                                st.write("🔴 **Double impact on profitability**: More customers using bennies AND higher usage per customer")
+
         else:
             st.info("Need data from multiple quarters to show year-over-year comparison")
 
