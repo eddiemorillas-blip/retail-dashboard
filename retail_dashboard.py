@@ -1251,15 +1251,27 @@ def main() -> None:
 
         # KPIs for vendor analysis
         total_vendors = len(vendor_performance)
-        top_vendor = vendor_performance.iloc[0]
-        top_5_sales = vendor_performance.head(5)["total_sales"].sum()
-        top_5_share = (top_5_sales / total_sales * 100) if total_sales > 0 else 0
+
+        if len(vendor_performance) > 0:
+            top_vendor = vendor_performance.iloc[0]
+            top_5_sales = vendor_performance.head(5)["total_sales"].sum()
+            top_5_share = (top_5_sales / total_sales * 100) if total_sales > 0 else 0
+        else:
+            top_vendor = None
+            top_5_sales = 0
+            top_5_share = 0
 
         vend1, vend2, vend3, vend4 = st.columns(4)
         vend1.metric("Total Vendors", f"{total_vendors:,}")
-        vend2.metric("Top Vendor", str(top_vendor["vendor_name"])[:15] + "..." if len(str(top_vendor["vendor_name"])) > 15 else str(top_vendor["vendor_name"]))
-        vend3.metric("Top 5 Share", f"{top_5_share:.1f}%")
-        vend4.metric("Top Vendor Sales", f"${top_vendor['total_sales']:,.0f}")
+
+        if top_vendor is not None:
+            vend2.metric("Top Vendor", str(top_vendor["vendor_name"])[:15] + "..." if len(str(top_vendor["vendor_name"])) > 15 else str(top_vendor["vendor_name"]))
+            vend3.metric("Top 5 Share", f"{top_5_share:.1f}%")
+            vend4.metric("Top Vendor Sales", f"${top_vendor['total_sales']:,.0f}")
+        else:
+            vend2.metric("Top Vendor", "No vendors")
+            vend3.metric("Top 5 Share", "0.0%")
+            vend4.metric("Top Vendor Sales", "$0")
 
         # Visualizations
         vcol1, vcol2 = st.columns(2)
