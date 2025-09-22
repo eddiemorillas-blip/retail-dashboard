@@ -597,19 +597,19 @@ def main() -> None:
         df_yoy['quarter'] = df_yoy[date_col].dt.quarter
         df_yoy['year_quarter'] = df_yoy['year'].astype(str) + ' Q' + df_yoy['quarter'].astype(str)
 
-        # Add weekly data for trend lines
-        df_yoy['year_week'] = df_yoy[date_col].dt.to_period('W').astype(str)
-        df_yoy['week_number'] = df_yoy[date_col].dt.isocalendar().week
+        # Add monthly data for trend lines
+        df_yoy['year_month'] = df_yoy[date_col].dt.to_period('M').astype(str)
+        df_yoy['month'] = df_yoy[date_col].dt.month
 
-        # Calculate weekly profit metrics for line charts
-        weekly_profit = df_yoy.groupby(['year', 'week_number', 'year_week']).agg({
+        # Calculate monthly profit metrics for line charts
+        monthly_profit = df_yoy.groupby(['year', 'month', 'year_month']).agg({
             'purchase_price_w_discount': 'sum',
             cost_col: 'sum'
         }).reset_index()
 
-        weekly_profit['profit'] = weekly_profit['purchase_price_w_discount'] - weekly_profit[cost_col]
-        weekly_profit['profit_margin'] = (weekly_profit['profit'] / weekly_profit['purchase_price_w_discount'] * 100).round(2)
-        weekly_profit = weekly_profit[weekly_profit['purchase_price_w_discount'] > 0]  # Remove weeks with no sales
+        monthly_profit['profit'] = monthly_profit['purchase_price_w_discount'] - monthly_profit[cost_col]
+        monthly_profit['profit_margin'] = (monthly_profit['profit'] / monthly_profit['purchase_price_w_discount'] * 100).round(2)
+        monthly_profit = monthly_profit[monthly_profit['purchase_price_w_discount'] > 0]  # Remove months with no sales
 
         # Calculate quarterly profit metrics for comparison tables/charts
         quarterly_profit = df_yoy.groupby(['year', 'quarter', 'year_quarter']).agg({
@@ -620,19 +620,19 @@ def main() -> None:
         quarterly_profit['profit'] = quarterly_profit['purchase_price_w_discount'] - quarterly_profit[cost_col]
         quarterly_profit['profit_margin'] = (quarterly_profit['profit'] / quarterly_profit['purchase_price_w_discount'] * 100).round(2)
 
-        if len(weekly_profit) >= 2:  # Need at least 2 data points
-            # Create weekly trend visualizations
+        if len(monthly_profit) >= 2:  # Need at least 2 data points
+            # Create monthly trend visualizations
             col1, col2 = st.columns(2)
 
             with col1:
-                # Weekly profit trend
+                # Monthly profit trend
                 fig_profit_trend = px.line(
-                    weekly_profit,
-                    x='year_week',
+                    monthly_profit,
+                    x='year_month',
                     y='profit',
                     color='year',
-                    title='Weekly Profit Trend by Year',
-                    labels={'profit': 'Profit ($)', 'year_week': 'Week', 'year': 'Year'},
+                    title='Monthly Profit Trend by Year',
+                    labels={'profit': 'Profit ($)', 'year_month': 'Month', 'year': 'Year'},
                     markers=True
                 )
                 fig_profit_trend.update_layout(
@@ -642,14 +642,14 @@ def main() -> None:
                 st.plotly_chart(fig_profit_trend, use_container_width=True)
 
             with col2:
-                # Weekly profit margin trend
+                # Monthly profit margin trend
                 fig_margin_trend = px.line(
-                    weekly_profit,
-                    x='year_week',
+                    monthly_profit,
+                    x='year_month',
                     y='profit_margin',
                     color='year',
-                    title='Weekly Profit Margin Trend by Year',
-                    labels={'profit_margin': 'Profit Margin (%)', 'year_week': 'Week', 'year': 'Year'},
+                    title='Monthly Profit Margin Trend by Year',
+                    labels={'profit_margin': 'Profit Margin (%)', 'year_month': 'Month', 'year': 'Year'},
                     markers=True
                 )
                 fig_margin_trend.update_layout(
