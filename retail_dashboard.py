@@ -783,6 +783,84 @@ def main() -> None:
                         }),
                         use_container_width=True
                     )
+
+                    # Diagnostic Analysis for Profitability Changes
+                    st.subheader("Profitability Change Analysis")
+
+                    # Calculate key metrics by year
+                    year_analysis = df_yoy.groupby('year').agg({
+                        'purchase_price_w_discount': ['sum', 'mean', 'count'],
+                        cost_col: ['sum', 'mean'],
+                    }).round(2)
+
+                    year_analysis.columns = ['Total_Revenue', 'Avg_Sale_Price', 'Transaction_Count', 'Total_Cost', 'Avg_Unit_Cost']
+                    year_analysis['Total_Profit'] = year_analysis['Total_Revenue'] - year_analysis['Total_Cost']
+                    year_analysis['Profit_Margin'] = (year_analysis['Total_Profit'] / year_analysis['Total_Revenue'] * 100).round(2)
+                    year_analysis['Avg_Profit_Per_Sale'] = (year_analysis['Total_Profit'] / year_analysis['Transaction_Count']).round(2)
+
+                    # Show year comparison
+                    st.write("**Key Metrics by Year:**")
+                    st.dataframe(
+                        year_analysis.style.format({
+                            'Total_Revenue': '${:,.0f}',
+                            'Avg_Sale_Price': '${:.2f}',
+                            'Transaction_Count': '{:,.0f}',
+                            'Total_Cost': '${:,.0f}',
+                            'Avg_Unit_Cost': '${:.2f}',
+                            'Total_Profit': '${:,.0f}',
+                            'Profit_Margin': '{:.2f}%',
+                            'Avg_Profit_Per_Sale': '${:.2f}'
+                        }),
+                        use_container_width=True
+                    )
+
+                    # Identify potential causes
+                    years = sorted(year_analysis.index.tolist())
+                    if len(years) >= 2:
+                        latest_year = years[-1]
+                        previous_year = years[-2]
+
+                        st.write(f"**Comparing {previous_year} vs {latest_year}:**")
+
+                        # Calculate changes
+                        revenue_change = ((year_analysis.loc[latest_year, 'Total_Revenue'] / year_analysis.loc[previous_year, 'Total_Revenue']) - 1) * 100
+                        cost_change = ((year_analysis.loc[latest_year, 'Total_Cost'] / year_analysis.loc[previous_year, 'Total_Cost']) - 1) * 100
+                        avg_price_change = ((year_analysis.loc[latest_year, 'Avg_Sale_Price'] / year_analysis.loc[previous_year, 'Avg_Sale_Price']) - 1) * 100
+                        avg_cost_change = ((year_analysis.loc[latest_year, 'Avg_Unit_Cost'] / year_analysis.loc[previous_year, 'Avg_Unit_Cost']) - 1) * 100
+                        transaction_change = ((year_analysis.loc[latest_year, 'Transaction_Count'] / year_analysis.loc[previous_year, 'Transaction_Count']) - 1) * 100
+
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Revenue Change", f"{revenue_change:+.1f}%")
+                            st.metric("Avg Sale Price Change", f"{avg_price_change:+.1f}%")
+                        with col2:
+                            st.metric("Cost Change", f"{cost_change:+.1f}%")
+                            st.metric("Avg Unit Cost Change", f"{avg_cost_change:+.1f}%")
+                        with col3:
+                            st.metric("Transaction Volume Change", f"{transaction_change:+.1f}%")
+
+                        # Provide insights
+                        st.write("**Potential Causes of Profitability Changes:**")
+                        insights = []
+
+                        if avg_cost_change > avg_price_change + 2:
+                            insights.append("🔴 **Cost inflation outpacing price increases** - Unit costs rose faster than selling prices")
+
+                        if transaction_change < -5:
+                            insights.append("🔴 **Volume decline** - Significant drop in transaction count")
+
+                        if avg_price_change < -2:
+                            insights.append("🔴 **Price pressure** - Average selling prices declined")
+
+                        if cost_change > revenue_change + 5:
+                            insights.append("🔴 **Cost structure issue** - Total costs grew much faster than revenue")
+
+                        if not insights:
+                            insights.append("✅ **No obvious red flags** - Changes appear proportional")
+
+                        for insight in insights:
+                            st.write(insight)
+
         else:
             st.info("Need data from multiple quarters to show year-over-year comparison")
 
