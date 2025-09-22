@@ -406,7 +406,7 @@ def main() -> None:
                 selected_subcats = st.sidebar.multiselect(
                     "Select Subcategories",
                     options=available_subcats,
-                    default=available_subcats[:5] if len(available_subcats) > 5 else available_subcats,
+                    default=[],
                     help="Filter by subcategory (from revenue_subcategory column)"
                 )
 
