@@ -17,6 +17,9 @@ ENV/
 *.xlsx
 *.csv
 
+# Allow the master data file for GitHub sync
+!retail_data.xlsx
+
 # IDE
 .vscode/
 .idea/
