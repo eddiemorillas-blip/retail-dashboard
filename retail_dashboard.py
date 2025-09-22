@@ -920,7 +920,10 @@ def main() -> None:
 
                         col1, col2, col3 = st.columns(3)
                         with col1:
-                            st.metric("Bennies Value Change", f"${bennies_value_change:+,.0f}")
+                            # Show absolute value with proper interpretation
+                            color = "inverse" if bennies_value_change < 0 else "normal"
+                            st.metric("Bennies Value Change", f"${bennies_value_change:+,.0f}",
+                                     delta=f"${abs(bennies_value_change):,.0f} {'more' if bennies_value_change < 0 else 'less'} redeemed")
                         with col2:
                             st.metric("Bennies Count Change", f"{bennies_count_change:+,.0f}")
                         with col3:
@@ -940,11 +943,11 @@ def main() -> None:
                             st.write(f"• **{previous_year}**: Member Bennies were {bennies_pct_previous:.1f}% of total revenue")
                             st.write(f"• **{latest_year}**: Member Bennies are {bennies_pct_current:.1f}% of total revenue")
 
-                            if bennies_value_change > 1000:
-                                st.write(f"🔴 **Increased Member Bennies usage** - ${bennies_value_change:,.0f} more in bennies redeemed")
+                            if bennies_value_change < -1000:  # More negative = more bennies used
+                                st.write(f"🔴 **Increased Member Bennies usage** - ${abs(bennies_value_change):,.0f} more in bennies redeemed")
                                 st.write("   This directly reduces profitability as bennies represent discounts/rewards")
-                            elif bennies_value_change < -1000:
-                                st.write(f"🟢 **Decreased Member Bennies usage** - ${abs(bennies_value_change):,.0f} less in bennies redeemed")
+                            elif bennies_value_change > 1000:  # Less negative = fewer bennies used
+                                st.write(f"🟢 **Decreased Member Bennies usage** - ${bennies_value_change:,.0f} less in bennies redeemed")
                                 st.write("   This should improve profitability")
 
                             if bennies_count_change > 100:
