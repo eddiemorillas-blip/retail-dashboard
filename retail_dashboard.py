@@ -98,7 +98,16 @@ def load_data(filepath: Optional[str] = None, sharepoint_url: Optional[str] = No
 
     if filepath is None:
         base = Path(__file__).parent
-        filepath = base / "RETAIL.dataMart V2.xlsx"
+        # Try master file first, then GitHub sync file
+        master_file = base / "RETAIL.dataMart V2.xlsx"
+        github_file = base / "retail_data.xlsx"
+
+        if master_file.exists():
+            filepath = master_file
+        elif github_file.exists():
+            filepath = github_file
+        else:
+            raise FileNotFoundError(f"Data file not found. Looking for: {master_file} or {github_file}")
 
     filepath = Path(filepath)
     if not filepath.exists():
