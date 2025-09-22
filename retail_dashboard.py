@@ -882,13 +882,13 @@ def main() -> None:
                         for insight in insights:
                             st.write(insight)
 
-            # Member Bennies Analysis
+            # Member Bennies Analysis - Always show this section
+            st.subheader("Member Bennies Impact Analysis")
+
             if "revenue_subcategory" in df_yoy.columns:
                 member_bennies_data = df_yoy[df_yoy["revenue_subcategory"].str.contains("Member Bennies", case=False, na=False)]
 
                 if len(member_bennies_data) > 0:
-                    st.subheader("Member Bennies Impact Analysis")
-
                     # Show data context with specific category information
                     if "disp_category" in df.columns:
                         unique_categories = df["disp_category"].nunique()
@@ -1102,7 +1102,6 @@ def main() -> None:
                             if rate_change > 2 and bennies_value_change < -1000:
                                 st.write("🔴 **Double impact on profitability**: More customers using bennies AND higher usage per customer")
                 else:
-                    st.subheader("Member Bennies Impact Analysis")
                     if "disp_category" in df.columns:
                         unique_categories = df["disp_category"].nunique()
                         if unique_categories < df_original["disp_category"].nunique():
@@ -1112,6 +1111,8 @@ def main() -> None:
                             st.info("ℹ️ No Member Bennies data found in the current data")
                     else:
                         st.info("ℹ️ No Member Bennies data found in the current filtered data")
+            else:
+                st.info("ℹ️ Member Bennies analysis not available - revenue_subcategory column not found in data")
 
         else:
             st.info("Need data from multiple quarters to show year-over-year comparison")
