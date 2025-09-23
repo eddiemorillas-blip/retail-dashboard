@@ -1229,6 +1229,86 @@ def main() -> None:
 
     st.markdown("---")
 
+    # Product Highlights - Top Item per Category
+    st.subheader("Product Highlights")
+    st.write("Most popular individual item in each of the top 10 categories")
+
+    if "product_name" in df.columns and "revenue_subcategory" in df.columns:
+        # Get top 10 categories by total sales (excluding Member Bennies as it's not really a product category)
+        category_sales = df[~df["revenue_subcategory"].str.contains("Member Bennies", case=False, na=False)].groupby("revenue_subcategory")["purchase_price_w_discount"].sum().sort_values(ascending=False)
+        top_10_categories = category_sales.head(10).index.tolist()
+
+        # Show context for filtered data
+        if "disp_category" in df.columns:
+            unique_categories = df["disp_category"].nunique()
+            if unique_categories < df_original["disp_category"].nunique():
+                selected_categories = sorted(df["disp_category"].unique())
+                st.info(f"📊 Product highlights from filtered data: {', '.join(selected_categories)}")
+
+        product_highlights = []
+
+        for category in top_10_categories:
+            category_data = df[df["revenue_subcategory"] == category]
+
+            if len(category_data) > 0:
+                # Get most popular product by quantity sold
+                product_popularity = category_data.groupby("product_name").agg({
+                    "quantity": "sum",
+                    "purchase_price_w_discount": ["sum", "mean"],
+                    "invoice_id": "nunique"  # Number of unique transactions
+                }).round(2)
+
+                product_popularity.columns = ["Total_Quantity", "Total_Sales", "Avg_Price", "Unique_Transactions"]
+                product_popularity = product_popularity.sort_values("Total_Quantity", ascending=False)
+
+                if len(product_popularity) > 0:
+                    top_product = product_popularity.iloc[0]
+                    product_highlights.append({
+                        "Category": category,
+                        "Product": product_popularity.index[0],
+                        "Qty Sold": int(top_product["Total_Quantity"]),
+                        "Total Sales": f"${top_product['Total_Sales']:,.0f}",
+                        "Avg Price": f"${top_product['Avg_Price']:.2f}",
+                        "# Transactions": int(top_product["Unique_Transactions"]),
+                        "Category Sales": f"${category_sales[category]:,.0f}"
+                    })
+
+        if product_highlights:
+            highlights_df = pd.DataFrame(product_highlights)
+
+            # Display as a nice table
+            st.dataframe(
+                highlights_df.style.format({
+                    "Qty Sold": "{:,}",
+                    "# Transactions": "{:,}"
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
+
+            # Additional insights
+            st.write("**Top Product Insights:**")
+
+            # Find the overall top product
+            if len(highlights_df) > 0:
+                top_overall = highlights_df.loc[highlights_df["Qty Sold"].idxmax()]
+                st.write(f"🏆 **Best Seller**: {top_overall['Product']} ({top_overall['Category']}) with {top_overall['Qty Sold']:,} units sold")
+
+                # Highest value product
+                highlights_df["Total_Sales_Numeric"] = highlights_df["Total Sales"].str.replace("$", "").str.replace(",", "").astype(float)
+                top_revenue = highlights_df.loc[highlights_df["Total_Sales_Numeric"].idxmax()]
+                st.write(f"💰 **Top Revenue**: {top_revenue['Product']} ({top_revenue['Category']}) generating {top_revenue['Total Sales']} in sales")
+
+                # Most transactions
+                top_transactions = highlights_df.loc[highlights_df["# Transactions"].idxmax()]
+                st.write(f"🔄 **Most Popular**: {top_transactions['Product']} ({top_transactions['Category']}) purchased in {top_transactions['# Transactions']:,} different transactions")
+        else:
+            st.info("ℹ️ No product data available with current filters")
+    else:
+        st.info("ℹ️ Product data not available - missing product_name or revenue_subcategory columns")
+
+    st.markdown("---")
+
     # Sales by Time of Day Analysis
     st.subheader("Sales by Time of Day")
 
