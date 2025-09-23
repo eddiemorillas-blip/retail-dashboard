@@ -1266,45 +1266,55 @@ def main() -> None:
         period_sales = period_sales.sort_values("total_sales", ascending=False)
 
         # KPIs for time analysis
-        best_hour = hourly_sales.loc[hourly_sales["total_sales"].idxmax()]
-        best_period = period_sales.iloc[0]
+        if len(hourly_sales) > 0 and len(period_sales) > 0:
+            best_hour = hourly_sales.loc[hourly_sales["total_sales"].idxmax()]
+            best_period = period_sales.iloc[0]
 
-        time1, time2, time3, time4 = st.columns(4)
-        time1.metric("Best Hour", f"{int(best_hour['hour'])}:00", f"${best_hour['total_sales']:,.0f}")
-        time2.metric("Best Period", best_period["time_period"].split(" ")[0])
-        time3.metric("Peak Hour Transactions", f"{int(best_hour['transaction_count'])}")
-        time4.metric("Avg per Transaction", f"${best_hour['avg_transaction']:,.2f}")
+            time1, time2, time3, time4 = st.columns(4)
+            time1.metric("Best Hour", f"{int(best_hour['hour'])}:00", f"${best_hour['total_sales']:,.0f}")
+            time2.metric("Best Period", best_period["time_period"].split(" ")[0])
+            time3.metric("Peak Hour Transactions", f"{int(best_hour['transaction_count'])}")
+            time4.metric("Avg per Transaction", f"${best_hour['avg_transaction']:,.2f}")
+        else:
+            time1, time2, time3, time4 = st.columns(4)
+            time1.metric("Best Hour", "No data", "No transactions in selected date range")
+            time2.metric("Best Period", "No data")
+            time3.metric("Peak Hour Transactions", "0")
+            time4.metric("Avg per Transaction", "$0.00")
 
         # Visualizations
-        tcol1, tcol2 = st.columns(2)
+        if len(hourly_sales) > 0 and len(period_sales) > 0:
+            tcol1, tcol2 = st.columns(2)
 
-        # Hourly sales chart
-        with tcol1:
-            fig_hourly = px.bar(
-                hourly_sales,
-                x="hour",
-                y="total_sales",
-                title="Sales by Hour of Day",
-                labels={"hour": "Hour of Day", "total_sales": "Total Sales ($)"},
-                color="total_sales",
-                color_continuous_scale="Blues"
-            )
-            fig_hourly.update_layout(
-                xaxis_tickmode="linear",
-                xaxis_dtick=2,
-                yaxis_tickformat="$,.0f"
-            )
-            st.plotly_chart(fig_hourly, use_container_width=True)
+            # Hourly sales chart
+            with tcol1:
+                fig_hourly = px.bar(
+                    hourly_sales,
+                    x="hour",
+                    y="total_sales",
+                    title="Sales by Hour of Day",
+                    labels={"hour": "Hour of Day", "total_sales": "Total Sales ($)"},
+                    color="total_sales",
+                    color_continuous_scale="Blues"
+                )
+                fig_hourly.update_layout(
+                    xaxis_tickmode="linear",
+                    xaxis_dtick=2,
+                    yaxis_tickformat="$,.0f"
+                )
+                st.plotly_chart(fig_hourly, use_container_width=True)
 
-        # Time period pie chart
-        with tcol2:
-            fig_period = px.pie(
-                period_sales,
-                values="total_sales",
-                names="time_period",
-                title="Sales Distribution by Time Period"
-            )
-            st.plotly_chart(fig_period, use_container_width=True)
+            # Time period pie chart
+            with tcol2:
+                fig_period = px.pie(
+                    period_sales,
+                    values="total_sales",
+                    names="time_period",
+                    title="Sales Distribution by Time Period"
+                )
+                st.plotly_chart(fig_period, use_container_width=True)
+        else:
+            st.info("ℹ️ No data available for time analysis with the current date filters. Please select a broader date range.")
 
         # Day of week analysis
         st.subheader("Sales by Day of Week")
