@@ -80,7 +80,7 @@ def load_data_from_sharepoint(sharepoint_url: str, filename: str = "RETAIL.dataM
         raise FileNotFoundError(f"Error processing SharePoint file: {e}")
 
 
-@st.cache_data(persist=True)  # Persist cache across code changes
+@st.cache_data(ttl=300)  # Cache for 5 minutes
 def load_data(filepath: Optional[str] = None, sharepoint_url: Optional[str] = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load the RETAIL.dataMart V2.xlsx into a pandas DataFrame.
 
@@ -213,6 +213,12 @@ def main() -> None:
 
     # SharePoint Configuration Section
     st.sidebar.header("📊 Data Source Configuration")
+
+    # Refresh data button
+    if st.sidebar.button("🔄 Refresh Data", use_container_width=True, help="Clear cache and reload data from file"):
+        st.cache_data.clear()
+        st.success("Cache cleared! Data will reload.")
+        st.rerun()
 
     # Data source selection
     data_source = st.sidebar.radio(
