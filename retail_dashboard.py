@@ -80,8 +80,15 @@ def load_data_from_sharepoint(sharepoint_url: str, filename: str = "RETAIL.dataM
         raise FileNotFoundError(f"Error processing SharePoint file: {e}")
 
 
+def _get_file_mtime(filepath: str) -> float:
+    """Get file modification time for cache busting."""
+    try:
+        return Path(filepath).stat().st_mtime
+    except:
+        return 0
+
 @st.cache_data(ttl=300)  # Cache for 5 minutes
-def load_data(filepath: Optional[str] = None, sharepoint_url: Optional[str] = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+def load_data(filepath: Optional[str] = None, sharepoint_url: Optional[str] = None, _file_mtime: Optional[float] = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load the RETAIL.dataMart V2.xlsx into a pandas DataFrame.
 
     Args:
@@ -217,7 +224,8 @@ def main() -> None:
     # Refresh data button
     if st.sidebar.button("🔄 Refresh Data", use_container_width=True, help="Clear cache and reload data from file"):
         st.cache_data.clear()
-        st.success("Cache cleared! Data will reload.")
+        # Also clear browser cache by adding a timestamp to force reload
+        st.sidebar.success("✅ Cache cleared! Reloading...")
         st.rerun()
 
     # Data source selection
@@ -278,8 +286,22 @@ def main() -> None:
             df, checkins_df = load_data(sharepoint_url=sharepoint_url)
             st.sidebar.success("✅ Data loaded from SharePoint")
         else:
-            df, checkins_df = load_data()
-            st.sidebar.info("📁 Data loaded from local file")
+            # Determine which file will be loaded
+            base = Path(__file__).parent
+            master_file = base / "RETAIL.dataMart V2.xlsx"
+            github_file = base / "retail_data.xlsx"
+
+            if master_file.exists():
+                file_to_load = master_file
+            elif github_file.exists():
+                file_to_load = github_file
+            else:
+                file_to_load = None
+
+            # Pass file modification time to bust cache when file changes
+            file_mtime = _get_file_mtime(str(file_to_load)) if file_to_load else None
+            df, checkins_df = load_data(_file_mtime=file_mtime)
+            st.sidebar.info(f"📁 Data loaded from local file: {file_to_load.name if file_to_load else 'unknown'}")
     except FileNotFoundError as e:
         st.error(f"❌ Data Loading Error: {str(e)}")
         if data_source == "SharePoint":
