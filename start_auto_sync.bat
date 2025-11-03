@@ -2,6 +2,9 @@
 REM Auto-Sync Starter for Retail Dashboard
 REM Double-click this file to start automatic syncing
 
+REM Set UTF-8 encoding for emoji support
+chcp 65001 >nul 2>&1
+
 cd /d "%~dp0"
 
 echo ================================================================

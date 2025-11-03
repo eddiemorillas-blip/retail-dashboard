@@ -15,6 +15,25 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
+# Fix Windows console encoding for emoji support
+if sys.platform == 'win32':
+    try:
+        # Try to set UTF-8 mode
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except (AttributeError, Exception):
+        # If that fails, we'll use ASCII-safe output
+        pass
+
+def safe_print(text):
+    """Print text with fallback for encoding errors."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        # Remove emojis if encoding fails
+        ascii_text = text.encode('ascii', 'ignore').decode('ascii')
+        print(ascii_text)
+
 def get_file_modified_time(filepath):
     """Get the last modified time of a file."""
     try:
@@ -25,9 +44,9 @@ def get_file_modified_time(filepath):
 def sync_data():
     """Run the sync_data.py script."""
     try:
-        print(f"\n{'='*60}")
-        print(f"🔄 Change detected at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"{'='*60}")
+        safe_print(f"\n{'='*60}")
+        safe_print(f"🔄 Change detected at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        safe_print(f"{'='*60}")
 
         result = subprocess.run(
             [sys.executable, "sync_data.py"],
@@ -36,17 +55,17 @@ def sync_data():
         )
 
         if result.returncode == 0:
-            print(result.stdout)
-            print(f"{'='*60}")
-            print("✅ Auto-sync completed successfully!")
-            print(f"{'='*60}\n")
+            safe_print(result.stdout)
+            safe_print(f"{'='*60}")
+            safe_print("✅ Auto-sync completed successfully!")
+            safe_print(f"{'='*60}\n")
             return True
         else:
-            print(f"❌ Sync failed: {result.stderr}")
+            safe_print(f"❌ Sync failed: {result.stderr}")
             return False
 
     except Exception as e:
-        print(f"❌ Error running sync: {e}")
+        safe_print(f"❌ Error running sync: {e}")
         return False
 
 def watch_file():
@@ -54,20 +73,20 @@ def watch_file():
     master_file = Path("RETAIL.dataMart V2.xlsx")
 
     if not master_file.exists():
-        print(f"❌ Master file not found: {master_file}")
-        print("Please ensure 'RETAIL.dataMart V2.xlsx' is in the current directory")
+        safe_print(f"❌ Master file not found: {master_file}")
+        safe_print("Please ensure 'RETAIL.dataMart V2.xlsx' is in the current directory")
         sys.exit(1)
 
-    print("="*60)
-    print("🔍 AUTO-SYNC WATCHER STARTED")
-    print("="*60)
-    print(f"📁 Monitoring: {master_file.name}")
-    print(f"📍 Location: {master_file.absolute()}")
-    print(f"⏰ Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("="*60)
-    print("\n💡 TIP: Leave this window open in the background")
-    print("💡 Changes will be automatically pushed to GitHub/Streamlit Cloud\n")
-    print("Watching for changes... (Press Ctrl+C to stop)\n")
+    safe_print("="*60)
+    safe_print("🔍 AUTO-SYNC WATCHER STARTED")
+    safe_print("="*60)
+    safe_print(f"📁 Monitoring: {master_file.name}")
+    safe_print(f"📍 Location: {master_file.absolute()}")
+    safe_print(f"⏰ Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    safe_print("="*60)
+    safe_print("\n💡 TIP: Leave this window open in the background")
+    safe_print("💡 Changes will be automatically pushed to GitHub/Streamlit Cloud\n")
+    safe_print("Watching for changes... (Press Ctrl+C to stop)\n")
 
     last_modified = get_file_modified_time(master_file)
     last_sync_time = time.time()
@@ -92,16 +111,16 @@ def watch_file():
                 else:
                     # Still in cooldown period
                     remaining = int(cooldown_period - (current_time - last_sync_time))
-                    print(f"⏳ Change detected but in cooldown period ({remaining}s remaining)")
+                    safe_print(f"⏳ Change detected but in cooldown period ({remaining}s remaining)")
                     last_modified = current_modified
 
             # Check every 5 seconds
             time.sleep(5)
 
     except KeyboardInterrupt:
-        print("\n\n" + "="*60)
-        print("🛑 Auto-sync watcher stopped by user")
-        print("="*60)
+        safe_print("\n\n" + "="*60)
+        safe_print("🛑 Auto-sync watcher stopped by user")
+        safe_print("="*60)
         sys.exit(0)
 
 if __name__ == "__main__":
