@@ -574,43 +574,61 @@ def main() -> None:
             monthly_metrics = monthly_metrics.sort_values('year_month')
 
             if len(monthly_metrics) >= 2:
-                # Get latest complete month (last month in data)
-                latest_month = monthly_metrics.iloc[-1]
-                latest_month_name = latest_month['year_month'].strftime('%B %Y')
+                # Month selector
+                monthly_metrics['month_label'] = monthly_metrics['year_month'].astype(str)
+                available_months = monthly_metrics['month_label'].tolist()
+
+                # Create selectbox for month selection
+                selector_col1, selector_col2 = st.columns([1, 3])
+                with selector_col1:
+                    selected_month_str = st.selectbox(
+                        "Select Month:",
+                        options=available_months,
+                        index=len(available_months) - 1,  # Default to latest month
+                        help="Choose which month to analyze"
+                    )
+
+                # Get the selected month data
+                selected_month = monthly_metrics[monthly_metrics['month_label'] == selected_month_str].iloc[0]
+                selected_month_idx = monthly_metrics[monthly_metrics['month_label'] == selected_month_str].index[0]
+                selected_month_name = selected_month['year_month'].strftime('%B %Y')
 
                 # Previous month (MoM)
-                prev_month = monthly_metrics.iloc[-2] if len(monthly_metrics) >= 2 else None
+                prev_month = None
+                if selected_month_idx > 0:
+                    prev_month = monthly_metrics.iloc[selected_month_idx - 1]
 
                 # Same month last year (YoY)
-                latest_year = latest_month['year_month'].year
-                latest_month_num = latest_month['year_month'].month
+                selected_year = selected_month['year_month'].year
+                selected_month_num = selected_month['year_month'].month
                 same_month_last_year = monthly_metrics[
-                    (monthly_metrics['year_month'].apply(lambda x: x.year) == latest_year - 1) &
-                    (monthly_metrics['year_month'].apply(lambda x: x.month) == latest_month_num)
+                    (monthly_metrics['year_month'].apply(lambda x: x.year) == selected_year - 1) &
+                    (monthly_metrics['year_month'].apply(lambda x: x.month) == selected_month_num)
                 ]
                 same_month_ly = same_month_last_year.iloc[0] if len(same_month_last_year) > 0 else None
 
                 # Display metrics
-                st.write(f"**Latest Month: {latest_month_name}**")
+                st.write(f"**Analyzing: {selected_month_name}**")
 
                 col1, col2, col3 = st.columns(3)
 
                 with col1:
                     st.metric(
                         "Gross Profit",
-                        f"${latest_month['gross_profit']:,.0f}",
-                        help=f"Revenue: ${latest_month['purchase_price_w_discount']:,.0f} - COGS: ${latest_month[cost_col]:,.0f}"
+                        f"${selected_month['gross_profit']:,.0f}",
+                        help=f"Revenue: ${selected_month['purchase_price_w_discount']:,.0f} - COGS: ${selected_month[cost_col]:,.0f}"
                     )
 
                 with col2:
                     if prev_month is not None:
-                        mom_change = latest_month['gross_profit'] - prev_month['gross_profit']
+                        mom_change = selected_month['gross_profit'] - prev_month['gross_profit']
                         mom_pct = (mom_change / prev_month['gross_profit'] * 100) if prev_month['gross_profit'] != 0 else 0
                         prev_month_name = prev_month['year_month'].strftime('%B %Y')
                         st.metric(
                             "vs Previous Month",
                             f"${prev_month['gross_profit']:,.0f}",
                             delta=f"${mom_change:,.0f} ({mom_pct:+.1f}%)",
+                            delta_color="normal",  # Green for positive, red for negative
                             help=f"Compared to {prev_month_name}"
                         )
                     else:
@@ -618,13 +636,14 @@ def main() -> None:
 
                 with col3:
                     if same_month_ly is not None:
-                        yoy_change = latest_month['gross_profit'] - same_month_ly['gross_profit']
+                        yoy_change = selected_month['gross_profit'] - same_month_ly['gross_profit']
                         yoy_pct = (yoy_change / same_month_ly['gross_profit'] * 100) if same_month_ly['gross_profit'] != 0 else 0
                         same_month_ly_name = same_month_ly['year_month'].strftime('%B %Y')
                         st.metric(
                             "vs Same Month Last Year",
                             f"${same_month_ly['gross_profit']:,.0f}",
                             delta=f"${yoy_change:,.0f} ({yoy_pct:+.1f}%)",
+                            delta_color="normal",  # Green for positive, red for negative
                             help=f"Compared to {same_month_ly_name}"
                         )
                     else:
