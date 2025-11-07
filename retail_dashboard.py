@@ -553,6 +553,129 @@ def main() -> None:
         prof2.metric("Gross Profit", f"${profit:,.2f}")
         prof3.metric("Profit Margin", f"{profit_margin:.1f}%")
 
+        # Monthly Gross Profit Comparison
+        if date_col:
+            st.markdown("---")
+            st.subheader("Monthly Gross Profit Comparison")
+
+            # Prepare monthly data
+            df_monthly = df.copy()
+            df_monthly['year'] = df_monthly[date_col].dt.year
+            df_monthly['month'] = df_monthly[date_col].dt.month
+            df_monthly['year_month'] = df_monthly[date_col].dt.to_period('M')
+
+            # Calculate monthly gross profit
+            monthly_metrics = df_monthly.groupby('year_month').agg({
+                'purchase_price_w_discount': 'sum',
+                cost_col: 'sum'
+            }).reset_index()
+            monthly_metrics['gross_profit'] = monthly_metrics['purchase_price_w_discount'] - monthly_metrics[cost_col]
+            monthly_metrics['profit_margin'] = (monthly_metrics['gross_profit'] / monthly_metrics['purchase_price_w_discount'] * 100).round(1)
+            monthly_metrics = monthly_metrics.sort_values('year_month')
+
+            if len(monthly_metrics) >= 2:
+                # Get latest complete month (last month in data)
+                latest_month = monthly_metrics.iloc[-1]
+                latest_month_name = latest_month['year_month'].strftime('%B %Y')
+
+                # Previous month (MoM)
+                prev_month = monthly_metrics.iloc[-2] if len(monthly_metrics) >= 2 else None
+
+                # Same month last year (YoY)
+                latest_year = latest_month['year_month'].year
+                latest_month_num = latest_month['year_month'].month
+                same_month_last_year = monthly_metrics[
+                    (monthly_metrics['year_month'].apply(lambda x: x.year) == latest_year - 1) &
+                    (monthly_metrics['year_month'].apply(lambda x: x.month) == latest_month_num)
+                ]
+                same_month_ly = same_month_last_year.iloc[0] if len(same_month_last_year) > 0 else None
+
+                # Display metrics
+                st.write(f"**Latest Month: {latest_month_name}**")
+
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    st.metric(
+                        "Gross Profit",
+                        f"${latest_month['gross_profit']:,.0f}",
+                        help=f"Revenue: ${latest_month['purchase_price_w_discount']:,.0f} - COGS: ${latest_month[cost_col]:,.0f}"
+                    )
+
+                with col2:
+                    if prev_month is not None:
+                        mom_change = latest_month['gross_profit'] - prev_month['gross_profit']
+                        mom_pct = (mom_change / prev_month['gross_profit'] * 100) if prev_month['gross_profit'] != 0 else 0
+                        prev_month_name = prev_month['year_month'].strftime('%B %Y')
+                        st.metric(
+                            "vs Previous Month",
+                            f"${prev_month['gross_profit']:,.0f}",
+                            delta=f"${mom_change:,.0f} ({mom_pct:+.1f}%)",
+                            help=f"Compared to {prev_month_name}"
+                        )
+                    else:
+                        st.metric("vs Previous Month", "N/A", help="Not enough data")
+
+                with col3:
+                    if same_month_ly is not None:
+                        yoy_change = latest_month['gross_profit'] - same_month_ly['gross_profit']
+                        yoy_pct = (yoy_change / same_month_ly['gross_profit'] * 100) if same_month_ly['gross_profit'] != 0 else 0
+                        same_month_ly_name = same_month_ly['year_month'].strftime('%B %Y')
+                        st.metric(
+                            "vs Same Month Last Year",
+                            f"${same_month_ly['gross_profit']:,.0f}",
+                            delta=f"${yoy_change:,.0f} ({yoy_pct:+.1f}%)",
+                            help=f"Compared to {same_month_ly_name}"
+                        )
+                    else:
+                        st.metric("vs Same Month Last Year", "N/A", help="Not enough historical data")
+
+                # Monthly trend chart (last 12 months)
+                st.subheader("Monthly Gross Profit Trend (Last 12 Months)")
+                recent_months = monthly_metrics.tail(12).copy()
+                recent_months['month_label'] = recent_months['year_month'].astype(str)
+
+                fig_monthly_profit = px.bar(
+                    recent_months,
+                    x='month_label',
+                    y='gross_profit',
+                    title='Monthly Gross Profit',
+                    labels={'gross_profit': 'Gross Profit ($)', 'month_label': 'Month'},
+                    color='gross_profit',
+                    color_continuous_scale='Blues'
+                )
+                fig_monthly_profit.update_layout(
+                    xaxis_tickangle=-45,
+                    yaxis_tickformat='$,.0f',
+                    showlegend=False
+                )
+                st.plotly_chart(fig_monthly_profit, use_container_width=True)
+
+                # Detailed monthly table
+                st.subheader("Detailed Monthly Breakdown")
+                display_monthly = recent_months.copy()
+                display_monthly['Month'] = display_monthly['year_month'].astype(str)
+                display_monthly = display_monthly.rename(columns={
+                    'purchase_price_w_discount': 'Revenue',
+                    cost_col: 'COGS',
+                    'gross_profit': 'Gross Profit',
+                    'profit_margin': 'Profit Margin %'
+                })
+
+                st.dataframe(
+                    display_monthly[['Month', 'Revenue', 'COGS', 'Gross Profit', 'Profit Margin %']].style.format({
+                        'Revenue': '${:,.0f}',
+                        'COGS': '${:,.0f}',
+                        'Gross Profit': '${:,.0f}',
+                        'Profit Margin %': '{:.1f}%'
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("Need at least 2 months of data to show monthly comparisons")
+
+        st.markdown("---")
 
         # Profit by subcategory analysis
         if "revenue_subcategory" in df.columns:
