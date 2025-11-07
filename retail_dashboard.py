@@ -830,24 +830,7 @@ def main() -> None:
                         avg_daily_by_gym.columns = [location_col, 'Avg Daily Sales', 'Days with Sales']
                         avg_daily_by_gym = avg_daily_by_gym.sort_values('Avg Daily Sales', ascending=False)
 
-                        # Create bar chart
-                        fig_daily_gym = px.bar(
-                            avg_daily_by_gym,
-                            x=location_col,
-                            y='Avg Daily Sales',
-                            title=f'Average Daily Sales by Gym - {selected_month_name}',
-                            labels={'Avg Daily Sales': 'Average Daily Sales ($)'},
-                            color='Avg Daily Sales',
-                            color_continuous_scale='Viridis'
-                        )
-                        fig_daily_gym.update_layout(
-                            xaxis_tickangle=-45,
-                            yaxis_tickformat='$,.0f'
-                        )
-                        st.plotly_chart(fig_daily_gym, use_container_width=True)
-
                         # Display table
-                        st.write("**Detailed Breakdown:**")
                         st.dataframe(
                             avg_daily_by_gym.style.format({
                                 'Avg Daily Sales': '${:,.2f}',
