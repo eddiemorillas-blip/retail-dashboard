@@ -804,6 +804,61 @@ def main() -> None:
                     else:
                         st.metric("YoY Change", "N/A")
 
+                # Average Daily Sales by Gym for Selected Month
+                if location_col:
+                    st.markdown("---")
+                    st.subheader(f"Average Daily Sales by Gym - {selected_month_name}")
+
+                    # Filter data for selected month
+                    selected_month_data = df_monthly[df_monthly['year_month'] == selected_month['year_month']].copy()
+
+                    if len(selected_month_data) > 0:
+                        # Add date column (just the date, not datetime)
+                        selected_month_data['date'] = selected_month_data[date_col].dt.date
+
+                        # Calculate daily sales by gym
+                        daily_sales_by_gym = selected_month_data.groupby([location_col, 'date']).agg({
+                            'purchase_price_w_discount': 'sum'
+                        }).reset_index()
+
+                        # Calculate average daily sales per gym
+                        avg_daily_by_gym = daily_sales_by_gym.groupby(location_col).agg({
+                            'purchase_price_w_discount': 'mean',
+                            'date': 'count'  # Number of days with sales
+                        }).reset_index()
+
+                        avg_daily_by_gym.columns = [location_col, 'Avg Daily Sales', 'Days with Sales']
+                        avg_daily_by_gym = avg_daily_by_gym.sort_values('Avg Daily Sales', ascending=False)
+
+                        # Create bar chart
+                        fig_daily_gym = px.bar(
+                            avg_daily_by_gym,
+                            x=location_col,
+                            y='Avg Daily Sales',
+                            title=f'Average Daily Sales by Gym - {selected_month_name}',
+                            labels={'Avg Daily Sales': 'Average Daily Sales ($)'},
+                            color='Avg Daily Sales',
+                            color_continuous_scale='Viridis'
+                        )
+                        fig_daily_gym.update_layout(
+                            xaxis_tickangle=-45,
+                            yaxis_tickformat='$,.0f'
+                        )
+                        st.plotly_chart(fig_daily_gym, use_container_width=True)
+
+                        # Display table
+                        st.write("**Detailed Breakdown:**")
+                        st.dataframe(
+                            avg_daily_by_gym.style.format({
+                                'Avg Daily Sales': '${:,.2f}',
+                                'Days with Sales': '{:,.0f}'
+                            }),
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                    else:
+                        st.info("No data available for selected month")
+
                 # Monthly trend chart (last 12 months)
                 st.subheader("Monthly Gross Profit Trend (Last 12 Months)")
                 recent_months = monthly_metrics.tail(12).copy()
