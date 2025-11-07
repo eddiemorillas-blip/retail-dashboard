@@ -370,7 +370,9 @@ def main() -> None:
 
         if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
             start, end = date_range
-            df = df[(df[date_col] >= pd.to_datetime(start)) & (df[date_col] <= pd.to_datetime(end))]
+            # Convert end date to end of day (23:59:59) to include all transactions on that day
+            end_datetime = pd.to_datetime(end) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+            df = df[(df[date_col] >= pd.to_datetime(start)) & (df[date_col] <= end_datetime)]
 
     # Store/Location filter
     location_col = None
