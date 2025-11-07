@@ -686,6 +686,83 @@ def main() -> None:
                     else:
                         st.metric("YoY Change", "N/A", help="Not enough historical data")
 
+                # Revenue Row
+                st.markdown("---")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(
+                        "Revenue",
+                        f"${selected_month['purchase_price_w_discount']:,.0f}",
+                        help="Total revenue for the month"
+                    )
+
+                with col2:
+                    if prev_month is not None:
+                        revenue_change = selected_month['purchase_price_w_discount'] - prev_month['purchase_price_w_discount']
+                        revenue_pct = (revenue_change / prev_month['purchase_price_w_discount'] * 100) if prev_month['purchase_price_w_discount'] != 0 else 0
+
+                        if revenue_change >= 0:
+                            st.metric("MoM Change", f"↑ +${revenue_change:,.0f}", help=f"vs {prev_month_name}: ${prev_month['purchase_price_w_discount']:,.0f}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>+{revenue_pct:.1f}% increase</p>", unsafe_allow_html=True)
+                        else:
+                            st.metric("MoM Change", f"↓ ${revenue_change:,.0f}", help=f"vs {prev_month_name}: ${prev_month['purchase_price_w_discount']:,.0f}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>{revenue_pct:.1f}% decrease</p>", unsafe_allow_html=True)
+                    else:
+                        st.metric("MoM Change", "N/A")
+
+                with col3:
+                    if same_month_ly is not None:
+                        revenue_yoy_change = selected_month['purchase_price_w_discount'] - same_month_ly['purchase_price_w_discount']
+                        revenue_yoy_pct = (revenue_yoy_change / same_month_ly['purchase_price_w_discount'] * 100) if same_month_ly['purchase_price_w_discount'] != 0 else 0
+
+                        if revenue_yoy_change >= 0:
+                            st.metric("YoY Change", f"↑ +${revenue_yoy_change:,.0f}", help=f"vs {same_month_ly_name}: ${same_month_ly['purchase_price_w_discount']:,.0f}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>+{revenue_yoy_pct:.1f}% increase</p>", unsafe_allow_html=True)
+                        else:
+                            st.metric("YoY Change", f"↓ ${revenue_yoy_change:,.0f}", help=f"vs {same_month_ly_name}: ${same_month_ly['purchase_price_w_discount']:,.0f}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>{revenue_yoy_pct:.1f}% decrease</p>", unsafe_allow_html=True)
+                    else:
+                        st.metric("YoY Change", "N/A")
+
+                # COGS Row
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(
+                        "COGS",
+                        f"${selected_month[cost_col]:,.0f}",
+                        help="Cost of Goods Sold for the month"
+                    )
+
+                with col2:
+                    if prev_month is not None:
+                        cogs_change = selected_month[cost_col] - prev_month[cost_col]
+                        cogs_pct = (cogs_change / prev_month[cost_col] * 100) if prev_month[cost_col] != 0 else 0
+
+                        # More COGS = worse (red), Less COGS = better (green)
+                        if cogs_change >= 0:
+                            st.metric("MoM Change", f"↑ +${cogs_change:,.0f}", help=f"vs {prev_month_name}: ${prev_month[cost_col]:,.0f}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>+{cogs_pct:.1f}% increase</p>", unsafe_allow_html=True)
+                        else:
+                            st.metric("MoM Change", f"↓ ${cogs_change:,.0f}", help=f"vs {prev_month_name}: ${prev_month[cost_col]:,.0f}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>{cogs_pct:.1f}% decrease</p>", unsafe_allow_html=True)
+                    else:
+                        st.metric("MoM Change", "N/A")
+
+                with col3:
+                    if same_month_ly is not None:
+                        cogs_yoy_change = selected_month[cost_col] - same_month_ly[cost_col]
+                        cogs_yoy_pct = (cogs_yoy_change / same_month_ly[cost_col] * 100) if same_month_ly[cost_col] != 0 else 0
+
+                        # More COGS = worse (red), Less COGS = better (green)
+                        if cogs_yoy_change >= 0:
+                            st.metric("YoY Change", f"↑ +${cogs_yoy_change:,.0f}", help=f"vs {same_month_ly_name}: ${same_month_ly[cost_col]:,.0f}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>+{cogs_yoy_pct:.1f}% increase</p>", unsafe_allow_html=True)
+                        else:
+                            st.metric("YoY Change", f"↓ ${cogs_yoy_change:,.0f}", help=f"vs {same_month_ly_name}: ${same_month_ly[cost_col]:,.0f}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>{cogs_yoy_pct:.1f}% decrease</p>", unsafe_allow_html=True)
+                    else:
+                        st.metric("YoY Change", "N/A")
+
                 # Additional Monthly Metrics
                 st.markdown("---")
                 st.write("**Additional Monthly Metrics**")
