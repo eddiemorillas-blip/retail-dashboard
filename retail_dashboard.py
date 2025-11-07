@@ -87,8 +87,8 @@ def _get_file_mtime(filepath: str) -> float:
     except:
         return 0
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
-def load_data(filepath: Optional[str] = None, sharepoint_url: Optional[str] = None, _file_mtime: Optional[float] = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+@st.cache_data(ttl=60)  # Cache for 1 minute
+def load_data(filepath: Optional[str] = None, sharepoint_url: Optional[str] = None, file_mtime: Optional[float] = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load the RETAIL.dataMart V2.xlsx into a pandas DataFrame.
 
     Args:
@@ -224,7 +224,6 @@ def main() -> None:
     # Refresh data button
     if st.sidebar.button("🔄 Refresh Data", use_container_width=True, help="Clear cache and reload data from file"):
         st.cache_data.clear()
-        # Also clear browser cache by adding a timestamp to force reload
         st.sidebar.success("✅ Cache cleared! Reloading...")
         st.rerun()
 
@@ -300,8 +299,14 @@ def main() -> None:
 
             # Pass file modification time to bust cache when file changes
             file_mtime = _get_file_mtime(str(file_to_load)) if file_to_load else None
-            df, checkins_df = load_data(_file_mtime=file_mtime)
-            st.sidebar.info(f"📁 Data loaded from local file: {file_to_load.name if file_to_load else 'unknown'}")
+            df, checkins_df = load_data(file_mtime=file_mtime)
+
+            # Show file info and last modified time
+            if file_to_load:
+                from datetime import datetime
+                last_modified = datetime.fromtimestamp(file_mtime).strftime('%Y-%m-%d %H:%M:%S') if file_mtime else 'Unknown'
+                st.sidebar.info(f"📁 Data loaded from: {file_to_load.name}")
+                st.sidebar.caption(f"📅 File last modified: {last_modified}")
     except FileNotFoundError as e:
         st.error(f"❌ Data Loading Error: {str(e)}")
         if data_source == "SharePoint":
