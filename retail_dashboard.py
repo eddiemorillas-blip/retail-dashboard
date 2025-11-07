@@ -564,13 +564,41 @@ def main() -> None:
             df_monthly['month'] = df_monthly[date_col].dt.month
             df_monthly['year_month'] = df_monthly[date_col].dt.to_period('M')
 
-            # Calculate monthly gross profit
-            monthly_metrics = df_monthly.groupby('year_month').agg({
+            # Calculate monthly metrics including transactions, bennies, and basket size
+            agg_dict = {
                 'purchase_price_w_discount': 'sum',
                 cost_col: 'sum'
-            }).reset_index()
+            }
+
+            # Add transaction count (use invoice_id if available, otherwise row count)
+            if 'invoice_id' in df_monthly.columns:
+                agg_dict['invoice_id'] = 'nunique'
+                df_monthly['transaction_count'] = 1  # For fallback
+            else:
+                df_monthly['transaction_count'] = 1
+                agg_dict['transaction_count'] = 'sum'
+
+            monthly_metrics = df_monthly.groupby('year_month').agg(agg_dict).reset_index()
+
+            # Rename transaction column if using invoice_id
+            if 'invoice_id' in monthly_metrics.columns:
+                monthly_metrics = monthly_metrics.rename(columns={'invoice_id': 'transaction_count'})
+
             monthly_metrics['gross_profit'] = monthly_metrics['purchase_price_w_discount'] - monthly_metrics[cost_col]
             monthly_metrics['profit_margin'] = (monthly_metrics['gross_profit'] / monthly_metrics['purchase_price_w_discount'] * 100).round(1)
+            monthly_metrics['avg_basket'] = monthly_metrics['purchase_price_w_discount'] / monthly_metrics['transaction_count']
+
+            # Calculate bennies used per month
+            if 'revenue_subcategory' in df_monthly.columns:
+                bennies_monthly = df_monthly[df_monthly['revenue_subcategory'].str.contains('Member Bennies', case=False, na=False)].groupby('year_month').agg({
+                    'purchase_price_w_discount': 'sum'
+                }).reset_index()
+                bennies_monthly = bennies_monthly.rename(columns={'purchase_price_w_discount': 'bennies_used'})
+                monthly_metrics = monthly_metrics.merge(bennies_monthly, on='year_month', how='left')
+                monthly_metrics['bennies_used'] = monthly_metrics['bennies_used'].fillna(0)
+            else:
+                monthly_metrics['bennies_used'] = 0
+
             monthly_metrics = monthly_metrics.sort_values('year_month')
 
             if len(monthly_metrics) >= 2:
@@ -650,6 +678,123 @@ def main() -> None:
                             st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>{yoy_pct:.1f}% decrease</p>", unsafe_allow_html=True)
                     else:
                         st.metric("YoY Change", "N/A", help="Not enough historical data")
+
+                # Additional Monthly Metrics
+                st.markdown("---")
+                st.write("**Additional Monthly Metrics**")
+
+                # Row 1: Transactions
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(
+                        "Transactions",
+                        f"{int(selected_month['transaction_count']):,}",
+                        help="Number of unique transactions"
+                    )
+
+                with col2:
+                    if prev_month is not None:
+                        txn_change = selected_month['transaction_count'] - prev_month['transaction_count']
+                        txn_pct = (txn_change / prev_month['transaction_count'] * 100) if prev_month['transaction_count'] != 0 else 0
+
+                        if txn_change >= 0:
+                            st.metric("MoM Change", f"↑ +{int(txn_change):,}", help=f"vs {prev_month_name}: {int(prev_month['transaction_count']):,}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>+{txn_pct:.1f}% increase</p>", unsafe_allow_html=True)
+                        else:
+                            st.metric("MoM Change", f"↓ {int(txn_change):,}", help=f"vs {prev_month_name}: {int(prev_month['transaction_count']):,}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>{txn_pct:.1f}% decrease</p>", unsafe_allow_html=True)
+                    else:
+                        st.metric("MoM Change", "N/A")
+
+                with col3:
+                    if same_month_ly is not None:
+                        txn_yoy_change = selected_month['transaction_count'] - same_month_ly['transaction_count']
+                        txn_yoy_pct = (txn_yoy_change / same_month_ly['transaction_count'] * 100) if same_month_ly['transaction_count'] != 0 else 0
+
+                        if txn_yoy_change >= 0:
+                            st.metric("YoY Change", f"↑ +{int(txn_yoy_change):,}", help=f"vs {same_month_ly_name}: {int(same_month_ly['transaction_count']):,}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>+{txn_yoy_pct:.1f}% increase</p>", unsafe_allow_html=True)
+                        else:
+                            st.metric("YoY Change", f"↓ {int(txn_yoy_change):,}", help=f"vs {same_month_ly_name}: {int(same_month_ly['transaction_count']):,}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>{txn_yoy_pct:.1f}% decrease</p>", unsafe_allow_html=True)
+                    else:
+                        st.metric("YoY Change", "N/A")
+
+                # Row 2: Average Basket
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(
+                        "Avg Basket",
+                        f"${selected_month['avg_basket']:,.2f}",
+                        help="Average transaction value"
+                    )
+
+                with col2:
+                    if prev_month is not None:
+                        basket_change = selected_month['avg_basket'] - prev_month['avg_basket']
+                        basket_pct = (basket_change / prev_month['avg_basket'] * 100) if prev_month['avg_basket'] != 0 else 0
+
+                        if basket_change >= 0:
+                            st.metric("MoM Change", f"↑ +${basket_change:,.2f}", help=f"vs {prev_month_name}: ${prev_month['avg_basket']:,.2f}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>+{basket_pct:.1f}% increase</p>", unsafe_allow_html=True)
+                        else:
+                            st.metric("MoM Change", f"↓ ${basket_change:,.2f}", help=f"vs {prev_month_name}: ${prev_month['avg_basket']:,.2f}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>{basket_pct:.1f}% decrease</p>", unsafe_allow_html=True)
+                    else:
+                        st.metric("MoM Change", "N/A")
+
+                with col3:
+                    if same_month_ly is not None:
+                        basket_yoy_change = selected_month['avg_basket'] - same_month_ly['avg_basket']
+                        basket_yoy_pct = (basket_yoy_change / same_month_ly['avg_basket'] * 100) if same_month_ly['avg_basket'] != 0 else 0
+
+                        if basket_yoy_change >= 0:
+                            st.metric("YoY Change", f"↑ +${basket_yoy_change:,.2f}", help=f"vs {same_month_ly_name}: ${same_month_ly['avg_basket']:,.2f}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>+{basket_yoy_pct:.1f}% increase</p>", unsafe_allow_html=True)
+                        else:
+                            st.metric("YoY Change", f"↓ ${basket_yoy_change:,.2f}", help=f"vs {same_month_ly_name}: ${same_month_ly['avg_basket']:,.2f}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>{basket_yoy_pct:.1f}% decrease</p>", unsafe_allow_html=True)
+                    else:
+                        st.metric("YoY Change", "N/A")
+
+                # Row 3: Bennies Used
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(
+                        "Bennies Used",
+                        f"${selected_month['bennies_used']:,.0f}",
+                        help="Member Bennies redeemed (discounts given)"
+                    )
+
+                with col2:
+                    if prev_month is not None:
+                        bennies_change = selected_month['bennies_used'] - prev_month['bennies_used']
+                        bennies_pct = (bennies_change / prev_month['bennies_used'] * 100) if prev_month['bennies_used'] != 0 else 0
+
+                        # Note: More bennies used is BAD (red), less is GOOD (green) - inverse color logic
+                        if bennies_change <= 0:  # Less bennies = good
+                            st.metric("MoM Change", f"↓ ${bennies_change:,.0f}", help=f"vs {prev_month_name}: ${prev_month['bennies_used']:,.0f}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>{bennies_pct:.1f}% decrease (better!)</p>", unsafe_allow_html=True)
+                        else:  # More bennies = bad
+                            st.metric("MoM Change", f"↑ +${bennies_change:,.0f}", help=f"vs {prev_month_name}: ${prev_month['bennies_used']:,.0f}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>+{bennies_pct:.1f}% increase (worse)</p>", unsafe_allow_html=True)
+                    else:
+                        st.metric("MoM Change", "N/A")
+
+                with col3:
+                    if same_month_ly is not None:
+                        bennies_yoy_change = selected_month['bennies_used'] - same_month_ly['bennies_used']
+                        bennies_yoy_pct = (bennies_yoy_change / same_month_ly['bennies_used'] * 100) if same_month_ly['bennies_used'] != 0 else 0
+
+                        # Note: More bennies used is BAD (red), less is GOOD (green) - inverse color logic
+                        if bennies_yoy_change <= 0:  # Less bennies = good
+                            st.metric("YoY Change", f"↓ ${bennies_yoy_change:,.0f}", help=f"vs {same_month_ly_name}: ${same_month_ly['bennies_used']:,.0f}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>{bennies_yoy_pct:.1f}% decrease (better!)</p>", unsafe_allow_html=True)
+                        else:  # More bennies = bad
+                            st.metric("YoY Change", f"↑ +${bennies_yoy_change:,.0f}", help=f"vs {same_month_ly_name}: ${same_month_ly['bennies_used']:,.0f}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>+{bennies_yoy_pct:.1f}% increase (worse)</p>", unsafe_allow_html=True)
+                    else:
+                        st.metric("YoY Change", "N/A")
 
                 # Monthly trend chart (last 12 months)
                 st.subheader("Monthly Gross Profit Trend (Last 12 Months)")
