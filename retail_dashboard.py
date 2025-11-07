@@ -771,13 +771,13 @@ def main() -> None:
                         bennies_change = selected_month['bennies_used'] - prev_month['bennies_used']
                         bennies_pct = (bennies_change / prev_month['bennies_used'] * 100) if prev_month['bennies_used'] != 0 else 0
 
-                        # More bennies used = more member engagement = GOOD!
-                        if bennies_change >= 0:  # More bennies = good
-                            st.metric("MoM Change", f"↑ +${bennies_change:,.0f}", help=f"vs {prev_month_name}: ${prev_month['bennies_used']:,.0f}")
-                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>+{bennies_pct:.1f}% increase</p>", unsafe_allow_html=True)
-                        else:  # Less bennies = bad
+                        # Bennies are discounts (negative revenue) - more bennies = worse for profit
+                        if bennies_change <= 0:  # Less bennies used = better for profit
                             st.metric("MoM Change", f"↓ ${bennies_change:,.0f}", help=f"vs {prev_month_name}: ${prev_month['bennies_used']:,.0f}")
-                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>{bennies_pct:.1f}% decrease</p>", unsafe_allow_html=True)
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>{bennies_pct:.1f}% decrease (better for profit)</p>", unsafe_allow_html=True)
+                        else:  # More bennies used = worse for profit
+                            st.metric("MoM Change", f"↑ +${bennies_change:,.0f}", help=f"vs {prev_month_name}: ${prev_month['bennies_used']:,.0f}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>+{bennies_pct:.1f}% increase (worse for profit)</p>", unsafe_allow_html=True)
                     else:
                         st.metric("MoM Change", "N/A")
 
@@ -786,13 +786,13 @@ def main() -> None:
                         bennies_yoy_change = selected_month['bennies_used'] - same_month_ly['bennies_used']
                         bennies_yoy_pct = (bennies_yoy_change / same_month_ly['bennies_used'] * 100) if same_month_ly['bennies_used'] != 0 else 0
 
-                        # More bennies used = more member engagement = GOOD!
-                        if bennies_yoy_change >= 0:  # More bennies = good
-                            st.metric("YoY Change", f"↑ +${bennies_yoy_change:,.0f}", help=f"vs {same_month_ly_name}: ${same_month_ly['bennies_used']:,.0f}")
-                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>+{bennies_yoy_pct:.1f}% increase</p>", unsafe_allow_html=True)
-                        else:  # Less bennies = bad
+                        # Bennies are discounts (negative revenue) - more bennies = worse for profit
+                        if bennies_yoy_change <= 0:  # Less bennies used = better for profit
                             st.metric("YoY Change", f"↓ ${bennies_yoy_change:,.0f}", help=f"vs {same_month_ly_name}: ${same_month_ly['bennies_used']:,.0f}")
-                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>{bennies_yoy_pct:.1f}% decrease</p>", unsafe_allow_html=True)
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>{bennies_yoy_pct:.1f}% decrease (better for profit)</p>", unsafe_allow_html=True)
+                        else:  # More bennies used = worse for profit
+                            st.metric("YoY Change", f"↑ +${bennies_yoy_change:,.0f}", help=f"vs {same_month_ly_name}: ${same_month_ly['bennies_used']:,.0f}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>+{bennies_yoy_pct:.1f}% increase (worse for profit)</p>", unsafe_allow_html=True)
                     else:
                         st.metric("YoY Change", "N/A")
 
