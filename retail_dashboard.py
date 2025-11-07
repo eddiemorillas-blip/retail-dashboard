@@ -530,8 +530,15 @@ def main() -> None:
     if location_col and "purchase_price_w_discount" in df.columns:
         store_sales = df.groupby(location_col)["purchase_price_w_discount"].sum().reset_index()
         store_sales = store_sales.rename(columns={"purchase_price_w_discount": "Sales"}).sort_values("Sales", ascending=False)
-        fig_store = px.bar(store_sales.head(10), x=location_col, y="Sales", title="Top 10 Locations")
-        st.plotly_chart(fig_store, use_container_width=True)
+
+        # Display as table
+        st.dataframe(
+            store_sales.head(10).style.format({
+                'Sales': '${:,.2f}'
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
     else:
         st.info("No location or sales columns available to show store ranking.")
 
