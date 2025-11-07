@@ -624,30 +624,32 @@ def main() -> None:
                         mom_change = selected_month['gross_profit'] - prev_month['gross_profit']
                         mom_pct = (mom_change / prev_month['gross_profit'] * 100) if prev_month['gross_profit'] != 0 else 0
                         prev_month_name = prev_month['year_month'].strftime('%B %Y')
-                        st.metric(
-                            "vs Previous Month",
-                            f"${prev_month['gross_profit']:,.0f}",
-                            delta=f"${mom_change:,.0f} ({mom_pct:+.1f}%)",
-                            delta_color="normal",  # Green for positive, red for negative
-                            help=f"Compared to {prev_month_name}"
-                        )
+
+                        # Show change with colored text
+                        if mom_change >= 0:
+                            st.metric("MoM Change", f"↑ +${mom_change:,.0f}", help=f"vs {prev_month_name}: ${prev_month['gross_profit']:,.0f}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>+{mom_pct:.1f}% increase</p>", unsafe_allow_html=True)
+                        else:
+                            st.metric("MoM Change", f"↓ ${mom_change:,.0f}", help=f"vs {prev_month_name}: ${prev_month['gross_profit']:,.0f}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>{mom_pct:.1f}% decrease</p>", unsafe_allow_html=True)
                     else:
-                        st.metric("vs Previous Month", "N/A", help="Not enough data")
+                        st.metric("MoM Change", "N/A", help="Not enough data")
 
                 with col3:
                     if same_month_ly is not None:
                         yoy_change = selected_month['gross_profit'] - same_month_ly['gross_profit']
                         yoy_pct = (yoy_change / same_month_ly['gross_profit'] * 100) if same_month_ly['gross_profit'] != 0 else 0
                         same_month_ly_name = same_month_ly['year_month'].strftime('%B %Y')
-                        st.metric(
-                            "vs Same Month Last Year",
-                            f"${same_month_ly['gross_profit']:,.0f}",
-                            delta=f"${yoy_change:,.0f} ({yoy_pct:+.1f}%)",
-                            delta_color="normal",  # Green for positive, red for negative
-                            help=f"Compared to {same_month_ly_name}"
-                        )
+
+                        # Show change with colored text
+                        if yoy_change >= 0:
+                            st.metric("YoY Change", f"↑ +${yoy_change:,.0f}", help=f"vs {same_month_ly_name}: ${same_month_ly['gross_profit']:,.0f}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>+{yoy_pct:.1f}% increase</p>", unsafe_allow_html=True)
+                        else:
+                            st.metric("YoY Change", f"↓ ${yoy_change:,.0f}", help=f"vs {same_month_ly_name}: ${same_month_ly['gross_profit']:,.0f}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>{yoy_pct:.1f}% decrease</p>", unsafe_allow_html=True)
                     else:
-                        st.metric("vs Same Month Last Year", "N/A", help="Not enough historical data")
+                        st.metric("YoY Change", "N/A", help="Not enough historical data")
 
                 # Monthly trend chart (last 12 months)
                 st.subheader("Monthly Gross Profit Trend (Last 12 Months)")
