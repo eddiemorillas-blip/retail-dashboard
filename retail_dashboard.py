@@ -25,6 +25,12 @@ try:
 except ImportError:
     MSAL_AVAILABLE = False
 
+try:
+    import anthropic
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
+
 
 def load_data_from_sharepoint(sharepoint_url: str, filename: str = "RETAIL.dataMart V2.xlsx") -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load data from SharePoint using direct download URL.
@@ -2149,6 +2155,158 @@ def main() -> None:
         )
     else:
         st.info("Subcategory information not available")
+
+    st.markdown("---")
+
+    # Claude AI Assistant
+    if ANTHROPIC_AVAILABLE:
+        st.subheader("🤖 Ask Claude About Your Data")
+
+        # Initialize session state for chat history
+        if "chat_history" not in st.session_state:
+            st.session_state.chat_history = []
+
+        # API key configuration
+        api_key = None
+        if "ANTHROPIC_API_KEY" in st.secrets:
+            api_key = st.secrets["ANTHROPIC_API_KEY"]
+        else:
+            with st.expander("⚙️ Configure API Key"):
+                api_key_input = st.text_input(
+                    "Enter your Anthropic API key:",
+                    type="password",
+                    help="Get your API key from https://console.anthropic.com"
+                )
+                if api_key_input:
+                    api_key = api_key_input
+                st.info("💡 Tip: Add your API key to `.streamlit/secrets.toml` with `ANTHROPIC_API_KEY = \"your-key\"` to avoid entering it each time")
+
+        if api_key:
+            # Generate data context for Claude
+            def generate_data_context(df: pd.DataFrame, date_range: tuple) -> str:
+                """Generate a summary of the data for Claude's context."""
+                context_parts = []
+
+                # Basic stats
+                context_parts.append(f"Dataset Overview:")
+                context_parts.append(f"- Total transactions: {len(df):,}")
+                context_parts.append(f"- Date range: {date_range[0]} to {date_range[1]}")
+
+                # Revenue metrics
+                if "purchase_price_w_discount" in df.columns:
+                    total_revenue = df["purchase_price_w_discount"].sum()
+                    context_parts.append(f"- Total revenue: ${total_revenue:,.2f}")
+                    context_parts.append(f"- Average transaction: ${df['purchase_price_w_discount'].mean():,.2f}")
+
+                # COGS and margins
+                if "COGS" in df.columns:
+                    total_cogs = df["COGS"].sum()
+                    gross_profit = total_revenue - total_cogs
+                    margin = (gross_profit / total_revenue * 100) if total_revenue > 0 else 0
+                    context_parts.append(f"- Total COGS: ${total_cogs:,.2f}")
+                    context_parts.append(f"- Gross profit: ${gross_profit:,.2f}")
+                    context_parts.append(f"- Gross margin: {margin:.1f}%")
+
+                # Bennies
+                if "benny_total" in df.columns:
+                    total_bennies = df["benny_total"].sum()
+                    context_parts.append(f"- Total bennies (discounts): ${abs(total_bennies):,.2f}")
+
+                # Locations
+                if location_col and location_col in df.columns:
+                    locations = df[location_col].unique()
+                    context_parts.append(f"- Locations: {', '.join(str(loc) for loc in locations)}")
+
+                    # Sales by location
+                    location_sales = df.groupby(location_col)["purchase_price_w_discount"].sum().sort_values(ascending=False)
+                    context_parts.append(f"\nSales by location:")
+                    for loc, sales in location_sales.items():
+                        context_parts.append(f"  - {loc}: ${sales:,.2f}")
+
+                # Categories
+                if "revenue_subcategory" in df.columns:
+                    top_categories = df.groupby("revenue_subcategory")["purchase_price_w_discount"].sum().sort_values(ascending=False).head(5)
+                    context_parts.append(f"\nTop 5 categories by sales:")
+                    for cat, sales in top_categories.items():
+                        context_parts.append(f"  - {cat}: ${sales:,.2f}")
+
+                # Available columns
+                context_parts.append(f"\nAvailable data columns: {', '.join(df.columns.tolist())}")
+
+                return "\n".join(context_parts)
+
+            # Chat interface
+            col1, col2 = st.columns([5, 1])
+            with col1:
+                user_question = st.text_input(
+                    "Ask a question about your retail data:",
+                    placeholder="e.g., What were the top-selling products last month? Which location has the best margins?"
+                )
+            with col2:
+                st.write("")  # Spacing
+                st.write("")  # Spacing
+                clear_chat = st.button("Clear Chat")
+
+            if clear_chat:
+                st.session_state.chat_history = []
+                st.rerun()
+
+            if user_question:
+                # Add user message to history
+                st.session_state.chat_history.append({"role": "user", "content": user_question})
+
+                # Prepare context
+                data_context = generate_data_context(df, (df[date_col].min(), df[date_col].max()))
+
+                # Call Claude API
+                try:
+                    client = anthropic.Anthropic(api_key=api_key)
+
+                    # Build message history
+                    messages = []
+
+                    # Add system context as first user message with assistant acknowledgment
+                    if len(st.session_state.chat_history) == 1:
+                        system_context = f"""You are a helpful data analyst assistant. You have access to retail sales data with the following summary:
+
+{data_context}
+
+Please answer questions about this data based on the information provided. If asked to perform calculations or analysis that requires the raw data, explain what insights you can provide based on the summary statistics available. Be concise and focus on actionable insights."""
+
+                        messages.append({"role": "user", "content": system_context})
+                        messages.append({"role": "assistant", "content": "I understand. I'll help analyze your retail data based on the information provided. What would you like to know?"})
+
+                    # Add conversation history
+                    for msg in st.session_state.chat_history:
+                        messages.append({"role": msg["role"], "content": msg["content"]})
+
+                    # Get response
+                    with st.spinner("Claude is thinking..."):
+                        response = client.messages.create(
+                            model="claude-sonnet-4-5-20250929",
+                            max_tokens=2000,
+                            messages=messages
+                        )
+
+                    assistant_message = response.content[0].text
+                    st.session_state.chat_history.append({"role": "assistant", "content": assistant_message})
+
+                except Exception as e:
+                    st.error(f"Error communicating with Claude: {str(e)}")
+
+            # Display chat history
+            if st.session_state.chat_history:
+                st.markdown("### Conversation")
+                for msg in st.session_state.chat_history:
+                    if msg["role"] == "user":
+                        st.markdown(f"**You:** {msg['content']}")
+                    else:
+                        st.markdown(f"**Claude:** {msg['content']}")
+                        st.markdown("---")
+        else:
+            st.info("👆 Please configure your Anthropic API key to use the Claude assistant")
+    else:
+        st.info("💡 Install the `anthropic` package to enable the Claude AI assistant: `pip install anthropic`")
 
     st.markdown("---")
     st.write("Data sample")

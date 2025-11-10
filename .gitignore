@@ -11,7 +11,8 @@ ENV/
 .pytest_cache/
 
 # Streamlit
-.streamlit/
+.streamlit/secrets.toml
+.streamlit/config.toml
 
 # Data files (we'll sync these via automation)
 *.xlsx
