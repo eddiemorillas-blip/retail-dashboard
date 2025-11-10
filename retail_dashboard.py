@@ -187,6 +187,52 @@ def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def get_semester(date):
+    """Calculate semester and semester year based on company planning calendar.
+
+    Semester 1: Week 45 (Nov) - Week 19 (May)
+    Semester 2: Week 21 (May) - Week 43 (Oct)
+    Note: Weeks 20 and 44 are transition weeks
+
+    Returns:
+        tuple: (semester_number, semester_year, semester_label)
+        e.g., (1, 2024, "S1 2024")
+    """
+    if pd.isna(date):
+        return None, None, None
+
+    week_num = date.isocalendar()[1]
+    year = date.year
+
+    # Semester 1: Week 45-52 (of previous year) and Week 1-19 (of current year)
+    if 45 <= week_num <= 53:
+        # Late year (Nov-Dec) belongs to next year's Semester 1
+        semester = 1
+        semester_year = year + 1
+    elif 1 <= week_num <= 19:
+        # Early year (Jan-May) belongs to current year's Semester 1
+        semester = 1
+        semester_year = year
+    # Semester 2: Week 21-43
+    elif 21 <= week_num <= 43:
+        semester = 2
+        semester_year = year
+    # Transition weeks (20, 44)
+    else:
+        # Assign to nearest semester
+        if week_num == 20:
+            semester = 1
+            semester_year = year
+        elif week_num == 44:
+            semester = 2
+            semester_year = year
+        else:
+            return None, None, None
+
+    semester_label = f"S{semester} {semester_year}"
+    return semester, semester_year, semester_label
+
+
 def check_password():
     """Returns `True` if the user had the correct password."""
 
@@ -481,6 +527,38 @@ def main() -> None:
         else:
             # If no categories selected, show message
             st.sidebar.warning("No categories selected. Showing all data.")
+
+    # Add semester columns if date column exists
+    if date_col and date_col in df.columns:
+        df[['semester_num', 'semester_year', 'semester_label']] = df[date_col].apply(
+            lambda x: pd.Series(get_semester(x))
+        )
+        if not df_bennies.empty and date_col in df_bennies.columns:
+            df_bennies[['semester_num', 'semester_year', 'semester_label']] = df_bennies[date_col].apply(
+                lambda x: pd.Series(get_semester(x))
+            )
+
+    # Semester filter
+    if 'semester_label' in df.columns:
+        st.sidebar.subheader("Semester Filter")
+        available_semesters = sorted(df['semester_label'].dropna().unique(), reverse=True)
+
+        if available_semesters:
+            # Add "All Semesters" option
+            semester_options = ["All Semesters"] + available_semesters
+
+            selected_semester = st.sidebar.selectbox(
+                "Select Semester:",
+                options=semester_options,
+                index=0,  # Default to "All Semesters"
+                help="Filter by planning semester (S1: Week 45-19, S2: Week 21-43)"
+            )
+
+            # Apply semester filter
+            if selected_semester != "All Semesters":
+                df = df[df['semester_label'] == selected_semester]
+                if not df_bennies.empty and 'semester_label' in df_bennies.columns:
+                    df_bennies = df_bennies[df_bennies['semester_label'] == selected_semester]
 
     # Recalculate bennies totals after all filters applied
     if not df_bennies.empty:
@@ -1015,6 +1093,165 @@ def main() -> None:
                 )
             else:
                 st.info("Need at least 2 months of data to show monthly comparisons")
+
+        st.markdown("---")
+
+        # Semester Comparison
+        if 'semester_label' in df.columns:
+            st.subheader("Semester Performance Comparison")
+
+            # Prepare semester data
+            df_semester = df.copy()
+
+            # Calculate semester metrics
+            semester_metrics = df_semester.groupby('semester_label').agg({
+                'purchase_price_w_discount': 'sum',
+                cost_col: 'sum'
+            }).reset_index()
+
+            # Add transaction count
+            txn_counts = df_semester.groupby('semester_label').size().reset_index(name='transaction_count')
+            semester_metrics = semester_metrics.merge(txn_counts, on='semester_label')
+
+            # Add bennies per semester
+            if not df_bennies.empty and 'semester_label' in df_bennies.columns:
+                bennies_semester = df_bennies.groupby('semester_label').agg({
+                    'purchase_price_w_discount': 'sum'
+                }).reset_index()
+                bennies_semester['bennies_used'] = abs(bennies_semester['purchase_price_w_discount'])
+                bennies_semester = bennies_semester[['semester_label', 'bennies_used']]
+                semester_metrics = semester_metrics.merge(bennies_semester, on='semester_label', how='left')
+                semester_metrics['bennies_used'] = semester_metrics['bennies_used'].fillna(0)
+            else:
+                semester_metrics['bennies_used'] = 0
+
+            semester_metrics['gross_profit'] = semester_metrics['purchase_price_w_discount'] - semester_metrics[cost_col]
+            semester_metrics['profit_margin'] = (semester_metrics['gross_profit'] / semester_metrics['purchase_price_w_discount'] * 100).round(1)
+            semester_metrics['avg_basket'] = semester_metrics['purchase_price_w_discount'] / semester_metrics['transaction_count']
+
+            # Sort by semester
+            semester_metrics = semester_metrics.sort_values('semester_label')
+
+            if len(semester_metrics) >= 1:
+                # Semester selector
+                available_semesters_list = semester_metrics['semester_label'].tolist()
+
+                selector_col1, selector_col2 = st.columns([1, 3])
+                with selector_col1:
+                    selected_sem_str = st.selectbox(
+                        "Select Semester:",
+                        options=available_semesters_list,
+                        index=len(available_semesters_list) - 1,  # Default to latest semester
+                        help="Choose which semester to analyze",
+                        key="semester_selector"
+                    )
+
+                # Get selected semester data
+                selected_sem = semester_metrics[semester_metrics['semester_label'] == selected_sem_str].iloc[0]
+
+                # Get comparison semester (previous semester)
+                current_idx = semester_metrics[semester_metrics['semester_label'] == selected_sem_str].index[0]
+                prev_sem = semester_metrics.iloc[current_idx - 1] if current_idx > 0 else None
+
+                # Get year-over-year semester (same semester last year)
+                # Extract semester number and year
+                selected_sem_parts = selected_sem_str.split()
+                if len(selected_sem_parts) == 2:
+                    sem_num = selected_sem_parts[0]  # e.g., "S1"
+                    sem_year = int(selected_sem_parts[1])  # e.g., 2024
+                    yoy_label = f"{sem_num} {sem_year - 1}"
+                    yoy_sem = semester_metrics[semester_metrics['semester_label'] == yoy_label]
+                    same_sem_ly = yoy_sem.iloc[0] if len(yoy_sem) > 0 else None
+                else:
+                    same_sem_ly = None
+
+                # Display semester overview
+                st.markdown(f"### {selected_sem_str} Performance")
+
+                # Gross Profit Row
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    st.metric(
+                        "Gross Profit",
+                        f"${selected_sem['gross_profit']:,.0f}",
+                        help=f"Revenue (ex. bennies): ${selected_sem['purchase_price_w_discount']:,.0f} - COGS: ${selected_sem[cost_col]:,.0f}"
+                    )
+
+                with col2:
+                    if prev_sem is not None:
+                        sem_change = selected_sem['gross_profit'] - prev_sem['gross_profit']
+                        sem_pct = (sem_change / prev_sem['gross_profit'] * 100) if prev_sem['gross_profit'] != 0 else 0
+                        prev_sem_name = prev_sem['semester_label']
+
+                        if sem_change >= 0:
+                            st.metric("SoS Change", f"↑ +${sem_change:,.0f}", help=f"vs {prev_sem_name}: ${prev_sem['gross_profit']:,.0f}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>+{sem_pct:.1f}% increase</p>", unsafe_allow_html=True)
+                        else:
+                            st.metric("SoS Change", f"↓ ${sem_change:,.0f}", help=f"vs {prev_sem_name}: ${prev_sem['gross_profit']:,.0f}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>{sem_pct:.1f}% decrease</p>", unsafe_allow_html=True)
+                    else:
+                        st.metric("SoS Change", "N/A", help="No previous semester data")
+
+                with col3:
+                    if same_sem_ly is not None:
+                        yoy_change = selected_sem['gross_profit'] - same_sem_ly['gross_profit']
+                        yoy_pct = (yoy_change / same_sem_ly['gross_profit'] * 100) if same_sem_ly['gross_profit'] != 0 else 0
+                        same_sem_ly_name = same_sem_ly['semester_label']
+
+                        if yoy_change >= 0:
+                            st.metric("YoY Change", f"↑ +${yoy_change:,.0f}", help=f"vs {same_sem_ly_name}: ${same_sem_ly['gross_profit']:,.0f}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>+{yoy_pct:.1f}% increase</p>", unsafe_allow_html=True)
+                        else:
+                            st.metric("YoY Change", f"↓ ${yoy_change:,.0f}", help=f"vs {same_sem_ly_name}: ${same_sem_ly['gross_profit']:,.0f}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>{yoy_pct:.1f}% decrease</p>", unsafe_allow_html=True)
+                    else:
+                        st.metric("YoY Change", "N/A", help="No year-over-year data")
+
+                # Additional metrics
+                st.markdown("---")
+                col1, col2, col3, col4 = st.columns(4)
+
+                with col1:
+                    st.metric("Revenue", f"${selected_sem['purchase_price_w_discount']:,.0f}", help="Total revenue (bennies excluded)")
+
+                with col2:
+                    st.metric("COGS", f"${selected_sem[cost_col]:,.0f}")
+
+                with col3:
+                    st.metric("Transactions", f"{int(selected_sem['transaction_count']):,}")
+
+                with col4:
+                    st.metric("Bennies Used", f"${selected_sem['bennies_used']:,.0f}")
+
+                # Detailed semester table
+                st.markdown("---")
+                st.subheader("All Semesters Comparison")
+                display_semester = semester_metrics.copy()
+                display_semester = display_semester.rename(columns={
+                    'semester_label': 'Semester',
+                    'purchase_price_w_discount': 'Revenue',
+                    cost_col: 'COGS',
+                    'gross_profit': 'Gross Profit',
+                    'profit_margin': 'Profit Margin %',
+                    'transaction_count': 'Transactions',
+                    'bennies_used': 'Bennies Used'
+                })
+
+                st.dataframe(
+                    display_semester[['Semester', 'Revenue', 'COGS', 'Gross Profit', 'Profit Margin %', 'Transactions', 'Bennies Used']].style.format({
+                        'Revenue': '${:,.0f}',
+                        'COGS': '${:,.0f}',
+                        'Gross Profit': '${:,.0f}',
+                        'Profit Margin %': '{:.1f}%',
+                        'Transactions': '{:,.0f}',
+                        'Bennies Used': '${:,.0f}'
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("Not enough data to show semester comparisons")
 
         st.markdown("---")
 
