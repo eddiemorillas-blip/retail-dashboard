@@ -332,6 +332,21 @@ def main() -> None:
     # Store original unfiltered data for category filters
     df_original = df.copy()
 
+    # Separate bennies transactions from regular revenue
+    # Bennies will be tracked separately and excluded from all revenue calculations
+    if 'revenue_subcategory' in df.columns:
+        bennies_mask = df['revenue_subcategory'].str.contains('Member Bennies', case=False, na=False)
+        df_bennies = df[bennies_mask].copy()
+        df = df[~bennies_mask].copy()  # Exclude bennies from main dataframe
+
+        # Calculate total bennies for display
+        total_bennies = abs(df_bennies["purchase_price_w_discount"].sum()) if "purchase_price_w_discount" in df_bennies.columns else 0
+        bennies_count = len(df_bennies)
+    else:
+        df_bennies = pd.DataFrame()
+        total_bennies = 0
+        bennies_count = 0
+
     # Sidebar filters
     st.sidebar.header("Filters")
     # Date filter - find any date column
@@ -379,6 +394,9 @@ def main() -> None:
             # Convert end date to end of day (23:59:59) to include all transactions on that day
             end_datetime = pd.to_datetime(end) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
             df = df[(df[date_col] >= pd.to_datetime(start)) & (df[date_col] <= end_datetime)]
+            # Apply same date filter to bennies
+            if not df_bennies.empty and date_col in df_bennies.columns:
+                df_bennies = df_bennies[(df_bennies[date_col] >= pd.to_datetime(start)) & (df_bennies[date_col] <= end_datetime)]
 
     # Store/Location filter
     location_col = None
@@ -415,6 +433,9 @@ def main() -> None:
 
         if selected_locations:
             df = df[df[location_col].isin(selected_locations)]
+            # Apply same location filter to bennies
+            if not df_bennies.empty and location_col in df_bennies.columns:
+                df_bennies = df_bennies[df_bennies[location_col].isin(selected_locations)]
         else:
             st.sidebar.warning("No locations selected. Showing all data.")
 
@@ -436,6 +457,9 @@ def main() -> None:
         # Apply category filter
         if selected_cats:
             df = df[df["disp_category"].astype(str).isin(selected_cats)]
+            # Apply same category filter to bennies
+            if not df_bennies.empty and "disp_category" in df_bennies.columns:
+                df_bennies = df_bennies[df_bennies["disp_category"].astype(str).isin(selected_cats)]
 
             # Subcategories (from revenue_subcategory) - use original data for options
             if "revenue_subcategory" in df_original.columns:
@@ -451,14 +475,22 @@ def main() -> None:
                     help="Filter by subcategory (from revenue_subcategory column)"
                 )
 
-                # Apply subcategory filter
+                # Apply subcategory filter (only to main df, not bennies since they're always "Member Bennies")
                 if selected_subcats:
                     df = df[df["revenue_subcategory"].astype(str).isin(selected_subcats)]
         else:
             # If no categories selected, show message
             st.sidebar.warning("No categories selected. Showing all data.")
 
-    # KPIs - Calculate using purchase_price_w_discount
+    # Recalculate bennies totals after all filters applied
+    if not df_bennies.empty:
+        total_bennies = abs(df_bennies["purchase_price_w_discount"].sum()) if "purchase_price_w_discount" in df_bennies.columns else 0
+        bennies_count = len(df_bennies)
+    else:
+        total_bennies = 0
+        bennies_count = 0
+
+    # KPIs - Calculate using purchase_price_w_discount (bennies now excluded)
     if "purchase_price_w_discount" in df.columns:
         total_sales = float(df["purchase_price_w_discount"].sum())
     else:
@@ -469,10 +501,12 @@ def main() -> None:
 
     avg_basket = total_sales / total_txns if total_txns > 0 else float(np.nan)
 
-    kpi1, kpi2, kpi3 = st.columns(3)
-    kpi1.metric("Total Sales", f"${total_sales:,.2f}")
-    kpi2.metric("Transactions", f"{total_txns:,}")
-    kpi3.metric("Avg Basket", f"${avg_basket:,.2f}" if not np.isnan(avg_basket) else "N/A")
+    # Display KPIs in 4 columns including bennies
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+    kpi1.metric("Total Sales", f"${total_sales:,.2f}", help="Revenue excluding bennies transactions")
+    kpi2.metric("Transactions", f"{total_txns:,}", help="Number of non-bennies transactions")
+    kpi3.metric("Avg Basket", f"${avg_basket:,.2f}" if not np.isnan(avg_basket) else "N/A", help="Average transaction value (non-bennies)")
+    kpi4.metric("Bennies Used", f"${total_bennies:,.2f}", help=f"Total bennies (discounts) used across {bennies_count:,} transactions")
 
     # Charts
     st.subheader("Sales Over Time")
@@ -579,7 +613,7 @@ def main() -> None:
             df_monthly['month'] = df_monthly[date_col].dt.month
             df_monthly['year_month'] = df_monthly[date_col].dt.to_period('M')
 
-            # Calculate monthly metrics including transactions, bennies, and basket size
+            # Calculate monthly metrics (bennies already excluded from df_monthly)
             agg_dict = {
                 'purchase_price_w_discount': 'sum',
                 cost_col: 'sum'
@@ -603,12 +637,15 @@ def main() -> None:
             monthly_metrics['profit_margin'] = (monthly_metrics['gross_profit'] / monthly_metrics['purchase_price_w_discount'] * 100).round(1)
             monthly_metrics['avg_basket'] = monthly_metrics['purchase_price_w_discount'] / monthly_metrics['transaction_count']
 
-            # Calculate bennies used per month
-            if 'revenue_subcategory' in df_monthly.columns:
-                bennies_monthly = df_monthly[df_monthly['revenue_subcategory'].str.contains('Member Bennies', case=False, na=False)].groupby('year_month').agg({
+            # Calculate bennies used per month from df_bennies (separate tracking)
+            if not df_bennies.empty and date_col in df_bennies.columns:
+                df_bennies_monthly = df_bennies.copy()
+                df_bennies_monthly['year_month'] = df_bennies_monthly[date_col].dt.to_period('M')
+                bennies_monthly = df_bennies_monthly.groupby('year_month').agg({
                     'purchase_price_w_discount': 'sum'
                 }).reset_index()
-                bennies_monthly = bennies_monthly.rename(columns={'purchase_price_w_discount': 'bennies_used'})
+                bennies_monthly['bennies_used'] = abs(bennies_monthly['purchase_price_w_discount'])
+                bennies_monthly = bennies_monthly[['year_month', 'bennies_used']]
                 monthly_metrics = monthly_metrics.merge(bennies_monthly, on='year_month', how='left')
                 monthly_metrics['bennies_used'] = monthly_metrics['bennies_used'].fillna(0)
             else:
@@ -659,7 +696,7 @@ def main() -> None:
                     st.metric(
                         "Gross Profit",
                         f"${selected_month['gross_profit']:,.0f}",
-                        help=f"Revenue: ${selected_month['purchase_price_w_discount']:,.0f} - COGS: ${selected_month[cost_col]:,.0f}"
+                        help=f"Revenue (ex. bennies): ${selected_month['purchase_price_w_discount']:,.0f} - COGS: ${selected_month[cost_col]:,.0f}"
                     )
 
                 with col2:
@@ -701,7 +738,7 @@ def main() -> None:
                     st.metric(
                         "Revenue",
                         f"${selected_month['purchase_price_w_discount']:,.0f}",
-                        help="Total revenue for the month"
+                        help="Total revenue for the month (bennies excluded)"
                     )
 
                 with col2:
@@ -2189,28 +2226,27 @@ def main() -> None:
 
                 # Basic stats
                 context_parts.append(f"Dataset Overview:")
-                context_parts.append(f"- Total transactions: {len(df):,}")
+                context_parts.append(f"- Total transactions (excluding bennies): {len(df):,}")
                 context_parts.append(f"- Date range: {date_range[0]} to {date_range[1]}")
 
-                # Revenue metrics
+                # Revenue metrics (bennies excluded)
                 if "purchase_price_w_discount" in df.columns:
                     total_revenue = df["purchase_price_w_discount"].sum()
-                    context_parts.append(f"- Total revenue: ${total_revenue:,.2f}")
+                    context_parts.append(f"- Total revenue (bennies excluded): ${total_revenue:,.2f}")
                     context_parts.append(f"- Average transaction: ${df['purchase_price_w_discount'].mean():,.2f}")
 
+                # Bennies tracked separately
+                context_parts.append(f"- Bennies used (tracked separately): ${total_bennies:,.2f} across {bennies_count:,} transactions")
+
                 # COGS and margins
-                if "COGS" in df.columns:
-                    total_cogs = df["COGS"].sum()
+                cost_col_name = "unit_cost" if "unit_cost" in df.columns else "COGS" if "COGS" in df.columns else None
+                if cost_col_name:
+                    total_cogs = df[cost_col_name].sum()
                     gross_profit = total_revenue - total_cogs
                     margin = (gross_profit / total_revenue * 100) if total_revenue > 0 else 0
                     context_parts.append(f"- Total COGS: ${total_cogs:,.2f}")
                     context_parts.append(f"- Gross profit: ${gross_profit:,.2f}")
                     context_parts.append(f"- Gross margin: {margin:.1f}%")
-
-                # Bennies
-                if "benny_total" in df.columns:
-                    total_bennies = df["benny_total"].sum()
-                    context_parts.append(f"- Total bennies (discounts): ${abs(total_bennies):,.2f}")
 
                 # Locations
                 if location_col and location_col in df.columns:
