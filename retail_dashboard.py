@@ -1208,21 +1208,157 @@ def main() -> None:
                     else:
                         st.metric("YoY Change", "N/A", help="No year-over-year data")
 
-                # Additional metrics
+                # Revenue Row
                 st.markdown("---")
-                col1, col2, col3, col4 = st.columns(4)
-
+                col1, col2, col3 = st.columns(3)
                 with col1:
-                    st.metric("Revenue", f"${selected_sem['purchase_price_w_discount']:,.0f}", help="Total revenue (bennies excluded)")
+                    st.metric(
+                        "Revenue",
+                        f"${selected_sem['purchase_price_w_discount']:,.0f}",
+                        help="Total revenue (bennies excluded)"
+                    )
 
                 with col2:
-                    st.metric("COGS", f"${selected_sem[cost_col]:,.0f}")
+                    if prev_sem is not None:
+                        revenue_change = selected_sem['purchase_price_w_discount'] - prev_sem['purchase_price_w_discount']
+                        revenue_pct = (revenue_change / prev_sem['purchase_price_w_discount'] * 100) if prev_sem['purchase_price_w_discount'] != 0 else 0
+
+                        if revenue_change >= 0:
+                            st.metric("SoS Change", f"↑ +${revenue_change:,.0f}", help=f"vs {prev_sem['semester_label']}: ${prev_sem['purchase_price_w_discount']:,.0f}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>+{revenue_pct:.1f}% increase</p>", unsafe_allow_html=True)
+                        else:
+                            st.metric("SoS Change", f"↓ ${revenue_change:,.0f}", help=f"vs {prev_sem['semester_label']}: ${prev_sem['purchase_price_w_discount']:,.0f}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>{revenue_pct:.1f}% decrease</p>", unsafe_allow_html=True)
+                    else:
+                        st.metric("SoS Change", "N/A")
 
                 with col3:
-                    st.metric("Transactions", f"{int(selected_sem['transaction_count']):,}")
+                    if same_sem_ly is not None:
+                        revenue_yoy_change = selected_sem['purchase_price_w_discount'] - same_sem_ly['purchase_price_w_discount']
+                        revenue_yoy_pct = (revenue_yoy_change / same_sem_ly['purchase_price_w_discount'] * 100) if same_sem_ly['purchase_price_w_discount'] != 0 else 0
 
-                with col4:
-                    st.metric("Bennies Used", f"${selected_sem['bennies_used']:,.0f}")
+                        if revenue_yoy_change >= 0:
+                            st.metric("YoY Change", f"↑ +${revenue_yoy_change:,.0f}", help=f"vs {same_sem_ly['semester_label']}: ${same_sem_ly['purchase_price_w_discount']:,.0f}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>+{revenue_yoy_pct:.1f}% increase</p>", unsafe_allow_html=True)
+                        else:
+                            st.metric("YoY Change", f"↓ ${revenue_yoy_change:,.0f}", help=f"vs {same_sem_ly['semester_label']}: ${same_sem_ly['purchase_price_w_discount']:,.0f}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>{revenue_yoy_pct:.1f}% decrease</p>", unsafe_allow_html=True)
+                    else:
+                        st.metric("YoY Change", "N/A")
+
+                # COGS Row
+                st.markdown("---")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(
+                        "COGS",
+                        f"${selected_sem[cost_col]:,.0f}",
+                        help="Cost of Goods Sold"
+                    )
+
+                with col2:
+                    if prev_sem is not None:
+                        cogs_change = selected_sem[cost_col] - prev_sem[cost_col]
+                        cogs_pct = (cogs_change / prev_sem[cost_col] * 100) if prev_sem[cost_col] != 0 else 0
+
+                        if cogs_change >= 0:
+                            st.metric("SoS Change", f"↑ +${cogs_change:,.0f}", help=f"vs {prev_sem['semester_label']}: ${prev_sem[cost_col]:,.0f}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>+{cogs_pct:.1f}% increase (worse)</p>", unsafe_allow_html=True)
+                        else:
+                            st.metric("SoS Change", f"↓ ${cogs_change:,.0f}", help=f"vs {prev_sem['semester_label']}: ${prev_sem[cost_col]:,.0f}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>{cogs_pct:.1f}% decrease (better)</p>", unsafe_allow_html=True)
+                    else:
+                        st.metric("SoS Change", "N/A")
+
+                with col3:
+                    if same_sem_ly is not None:
+                        cogs_yoy_change = selected_sem[cost_col] - same_sem_ly[cost_col]
+                        cogs_yoy_pct = (cogs_yoy_change / same_sem_ly[cost_col] * 100) if same_sem_ly[cost_col] != 0 else 0
+
+                        if cogs_yoy_change >= 0:
+                            st.metric("YoY Change", f"↑ +${cogs_yoy_change:,.0f}", help=f"vs {same_sem_ly['semester_label']}: ${same_sem_ly[cost_col]:,.0f}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>+{cogs_yoy_pct:.1f}% increase (worse)</p>", unsafe_allow_html=True)
+                        else:
+                            st.metric("YoY Change", f"↓ ${cogs_yoy_change:,.0f}", help=f"vs {same_sem_ly['semester_label']}: ${same_sem_ly[cost_col]:,.0f}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>{cogs_yoy_pct:.1f}% decrease (better)</p>", unsafe_allow_html=True)
+                    else:
+                        st.metric("YoY Change", "N/A")
+
+                # Transactions Row
+                st.markdown("---")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(
+                        "Transactions",
+                        f"{int(selected_sem['transaction_count']):,}",
+                        help="Number of transactions (bennies excluded)"
+                    )
+
+                with col2:
+                    if prev_sem is not None:
+                        txn_change = selected_sem['transaction_count'] - prev_sem['transaction_count']
+                        txn_pct = (txn_change / prev_sem['transaction_count'] * 100) if prev_sem['transaction_count'] != 0 else 0
+
+                        if txn_change >= 0:
+                            st.metric("SoS Change", f"↑ +{int(txn_change):,}", help=f"vs {prev_sem['semester_label']}: {int(prev_sem['transaction_count']):,}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>+{txn_pct:.1f}% increase</p>", unsafe_allow_html=True)
+                        else:
+                            st.metric("SoS Change", f"↓ {int(txn_change):,}", help=f"vs {prev_sem['semester_label']}: {int(prev_sem['transaction_count']):,}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>{txn_pct:.1f}% decrease</p>", unsafe_allow_html=True)
+                    else:
+                        st.metric("SoS Change", "N/A")
+
+                with col3:
+                    if same_sem_ly is not None:
+                        txn_yoy_change = selected_sem['transaction_count'] - same_sem_ly['transaction_count']
+                        txn_yoy_pct = (txn_yoy_change / same_sem_ly['transaction_count'] * 100) if same_sem_ly['transaction_count'] != 0 else 0
+
+                        if txn_yoy_change >= 0:
+                            st.metric("YoY Change", f"↑ +{int(txn_yoy_change):,}", help=f"vs {same_sem_ly['semester_label']}: {int(same_sem_ly['transaction_count']):,}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>+{txn_yoy_pct:.1f}% increase</p>", unsafe_allow_html=True)
+                        else:
+                            st.metric("YoY Change", f"↓ {int(txn_yoy_change):,}", help=f"vs {same_sem_ly['semester_label']}: {int(same_sem_ly['transaction_count']):,}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>{txn_yoy_pct:.1f}% decrease</p>", unsafe_allow_html=True)
+                    else:
+                        st.metric("YoY Change", "N/A")
+
+                # Bennies Row
+                st.markdown("---")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(
+                        "Bennies Used",
+                        f"${selected_sem['bennies_used']:,.0f}",
+                        help="Member bennies redeemed (discounts given)"
+                    )
+
+                with col2:
+                    if prev_sem is not None:
+                        bennies_change = selected_sem['bennies_used'] - prev_sem['bennies_used']
+                        bennies_pct = (bennies_change / prev_sem['bennies_used'] * 100) if prev_sem['bennies_used'] != 0 else 0
+
+                        if bennies_change >= 0:
+                            st.metric("SoS Change", f"↑ +${bennies_change:,.0f}", help=f"vs {prev_sem['semester_label']}: ${prev_sem['bennies_used']:,.0f}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>+{bennies_pct:.1f}% more usage (worse)</p>", unsafe_allow_html=True)
+                        else:
+                            st.metric("SoS Change", f"↓ ${bennies_change:,.0f}", help=f"vs {prev_sem['semester_label']}: ${prev_sem['bennies_used']:,.0f}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>{abs(bennies_pct):.1f}% less usage (better)</p>", unsafe_allow_html=True)
+                    else:
+                        st.metric("SoS Change", "N/A")
+
+                with col3:
+                    if same_sem_ly is not None:
+                        bennies_yoy_change = selected_sem['bennies_used'] - same_sem_ly['bennies_used']
+                        bennies_yoy_pct = (bennies_yoy_change / same_sem_ly['bennies_used'] * 100) if same_sem_ly['bennies_used'] != 0 else 0
+
+                        if bennies_yoy_change >= 0:
+                            st.metric("YoY Change", f"↑ +${bennies_yoy_change:,.0f}", help=f"vs {same_sem_ly['semester_label']}: ${same_sem_ly['bennies_used']:,.0f}")
+                            st.markdown(f"<p style='color: red; margin-top: -15px; font-size: 0.9em;'>+{bennies_yoy_pct:.1f}% more usage (worse)</p>", unsafe_allow_html=True)
+                        else:
+                            st.metric("YoY Change", f"↓ ${bennies_yoy_change:,.0f}", help=f"vs {same_sem_ly['semester_label']}: ${same_sem_ly['bennies_used']:,.0f}")
+                            st.markdown(f"<p style='color: green; margin-top: -15px; font-size: 0.9em;'>{abs(bennies_yoy_pct):.1f}% less usage (better)</p>", unsafe_allow_html=True)
+                    else:
+                        st.metric("YoY Change", "N/A")
 
                 # Detailed semester table
                 st.markdown("---")
