@@ -31,6 +31,18 @@ try:
 except ImportError:
     ANTHROPIC_AVAILABLE = False
 
+try:
+    from fpdf import FPDF
+    FPDF_AVAILABLE = True
+except ImportError:
+    FPDF_AVAILABLE = False
+
+try:
+    from bigquery_loader import BigQueryLoader, render_bigquery_config_ui
+    BIGQUERY_AVAILABLE = True
+except ImportError:
+    BIGQUERY_AVAILABLE = False
+
 
 def load_data_from_sharepoint(sharepoint_url: str, filename: str = "RETAIL.dataMart V2.xlsx") -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load data from SharePoint using direct download URL.
@@ -176,8 +188,15 @@ def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
 
     # Convert date columns to datetime if they exist
     for col in df.columns:
-        if 'date' in col.lower() and df[col].dtype == 'object':
-            df[col] = pd.to_datetime(df[col], errors='coerce')
+        if 'date' in col.lower():
+            if df[col].dtype == 'object':
+                df[col] = pd.to_datetime(df[col], errors='coerce')
+            # Remove timezone info if present (BigQuery returns UTC timestamps)
+            try:
+                if hasattr(df[col], 'dt') and df[col].dt.tz is not None:
+                    df[col] = df[col].dt.tz_convert(None)  # Convert to timezone-naive
+            except (AttributeError, TypeError):
+                pass  # Column doesn't support timezone operations
 
     # Convert price columns to numeric if they exist
     for col in df.columns:
@@ -238,6 +257,8 @@ def check_password():
 
     def password_entered():
         """Checks whether a password entered by the user is correct."""
+        if "password" not in st.session_state:
+            return
         if st.session_state["password"] == "L6xQ@J%S@rGP":  # Secure password
             st.session_state["password_correct"] = True
             del st.session_state["password"]  # Don't store the password
@@ -279,15 +300,56 @@ def main() -> None:
         st.sidebar.success("✅ Cache cleared! Reloading...")
         st.rerun()
 
-    # Data source selection
+    # Data source selection - include BigQuery if available
+    # Check if local parquet files exist (fastest option)
+    parquet_purchases = Path(__file__).parent / "retail_purchases_proshop.parquet"
+    parquet_checkins = Path(__file__).parent / "checkins_daily_summary.parquet"
+    parquet_available = parquet_purchases.exists() and parquet_checkins.exists()
+
+    data_source_options = ["Local File", "SharePoint"]
+    default_index = 0
+
+    if parquet_available:
+        data_source_options.insert(0, "Local Parquet (Fast)")
+        default_index = 0  # Default to fast parquet files
+
+    if BIGQUERY_AVAILABLE:
+        data_source_options.append("BigQuery")
+
     data_source = st.sidebar.radio(
         "Choose data source:",
-        ["Local File", "SharePoint"],
-        help="Select whether to load data from a local file or SharePoint"
+        data_source_options,
+        index=default_index,
+        help="Select whether to load data from a local file, SharePoint, or BigQuery"
     )
 
+    # Add "Refresh from BigQuery" button when BigQuery is available
+    if BIGQUERY_AVAILABLE:
+        from bigquery_loader import BigQueryLoader
+        bq_loader = BigQueryLoader()
+        if bq_loader.is_configured():
+            if st.sidebar.button("⬇️ Update Local Data from BigQuery", use_container_width=True,
+                                help="Fetch latest data from BigQuery and save to local parquet files"):
+                with st.sidebar:
+                    with st.spinner("Fetching data from BigQuery..."):
+                        success, message = bq_loader.save_to_parquet()
+                        if success:
+                            st.success(f"✅ {message}")
+                            st.cache_data.clear()
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {message}")
+
     sharepoint_url = None
-    if data_source == "SharePoint":
+    bigquery_config = None
+
+    if data_source == "BigQuery":
+        bigquery_config = render_bigquery_config_ui()
+        if not bigquery_config:
+            st.info("👈 Configure BigQuery connection in the sidebar to load your data")
+            return
+
+    elif data_source == "SharePoint":
         st.sidebar.subheader("SharePoint Settings")
         sharepoint_url = st.sidebar.text_input(
             "SharePoint File URL",
@@ -331,13 +393,64 @@ def main() -> None:
                     except Exception as e:
                         st.error(f"❌ Connection error: {str(e)}")
 
+    # Check for inventory parquet file
+    parquet_inventory = Path(__file__).parent / "inventory_on_hand.parquet"
+    inventory_available = parquet_inventory.exists()
+
     # Load data (wrapped in cache)
     try:
-        if data_source == "SharePoint" and sharepoint_url:
+        if data_source == "Local Parquet (Fast)":
+            # Load from local parquet files (fastest option)
+            df = pd.read_parquet(parquet_purchases)
+            checkins_df = pd.read_parquet(parquet_checkins)
+
+            # Load inventory if available
+            if inventory_available:
+                inventory_df = pd.read_parquet(parquet_inventory)
+            else:
+                inventory_df = pd.DataFrame()
+
+            inv_msg = f" | Inventory: {len(inventory_df):,}" if not inventory_df.empty else ""
+            st.sidebar.success(f"✅ Purchases: {len(df):,} | Check-ins: {len(checkins_df):,}{inv_msg} rows")
+
+        elif data_source == "BigQuery" and bigquery_config:
+            # Load from BigQuery (both cached for 24 hours)
+            loader = bigquery_config["loader"]
+            months_back = bigquery_config.get("months_back", 24)
+
+            with st.spinner("Loading data from BigQuery..."):
+                df, _ = loader.load_retail_data(
+                    dataset_id=bigquery_config["dataset_id"],
+                    purchases_table=bigquery_config["purchases_table"],
+                    months_back=months_back,
+                    load_checkins=False
+                )
+
+                if bigquery_config.get("load_checkins", True):
+                    checkins_df = loader.load_checkins(
+                        dataset_id=bigquery_config["dataset_id"],
+                        checkins_table=bigquery_config.get("checkins_table") or "check_ins_all",
+                        months_back=months_back
+                    )
+                else:
+                    checkins_df = pd.DataFrame()
+
+            # Load inventory if available (local parquet)
+            if inventory_available:
+                inventory_df = pd.read_parquet(parquet_inventory)
+            else:
+                inventory_df = pd.DataFrame()
+
+            inv_msg = f" | Inventory: {len(inventory_df):,}" if not inventory_df.empty else ""
+            st.sidebar.success(f"✅ Purchases: {len(df):,} | Check-ins: {len(checkins_df):,}{inv_msg} (cached 24hrs)")
+
+        elif data_source == "SharePoint" and sharepoint_url:
             df, checkins_df = load_data(sharepoint_url=sharepoint_url)
+            inventory_df = pd.read_parquet(parquet_inventory) if inventory_available else pd.DataFrame()
             st.sidebar.success("✅ Data loaded from SharePoint")
+
         else:
-            # Determine which file will be loaded
+            # Load from local file
             base = Path(__file__).parent
             master_file = base / "RETAIL.dataMart V2.xlsx"
             github_file = base / "retail_data.xlsx"
@@ -352,6 +465,7 @@ def main() -> None:
             # Pass file modification time to bust cache when file changes
             file_mtime = _get_file_mtime(str(file_to_load)) if file_to_load else None
             df, checkins_df = load_data(file_mtime=file_mtime)
+            inventory_df = pd.read_parquet(parquet_inventory) if inventory_available else pd.DataFrame()
 
             # Show file info and last modified time
             if file_to_load:
@@ -359,6 +473,7 @@ def main() -> None:
                 last_modified = datetime.fromtimestamp(file_mtime).strftime('%Y-%m-%d %H:%M:%S') if file_mtime else 'Unknown'
                 st.sidebar.info(f"📁 Data loaded from: {file_to_load.name}")
                 st.sidebar.caption(f"📅 File last modified: {last_modified}")
+
     except FileNotFoundError as e:
         st.error(f"❌ Data Loading Error: {str(e)}")
         if data_source == "SharePoint":
@@ -487,17 +602,32 @@ def main() -> None:
 
     # Category Filters using disp_category (use original data for options)
     if "disp_category" in df_original.columns:
-        st.sidebar.subheader("Category Filters")
+        st.sidebar.subheader("Display Category Filter")
 
         # Get unique categories from original data, ensuring they're strings
         categories = sorted([str(x) for x in df_original["disp_category"].dropna().unique().tolist()])
 
+        # Select all/none buttons
+        cat_col1, cat_col2 = st.sidebar.columns(2)
+        with cat_col1:
+            select_all_cats = st.button("Select All", key="cat_all", use_container_width=True)
+        with cat_col2:
+            select_none_cats = st.button("Clear All", key="cat_none", use_container_width=True)
+
+        # Default selection based on button clicks
+        if select_all_cats:
+            default_cats = categories
+        elif select_none_cats:
+            default_cats = []
+        else:
+            default_cats = categories  # Default to all categories selected
+
         # Category selection (always show multiselect)
         selected_cats = st.sidebar.multiselect(
-            "Select Categories",
+            "Select Display Categories",
             options=categories,
-            default=categories[:5] if len(categories) > 5 else categories,
-            help="Select one or more categories to filter the data"
+            default=default_cats,
+            help="Select one or more display categories to filter the data"
         )
 
         # Apply category filter
@@ -578,6 +708,1235 @@ def main() -> None:
     total_txns = int(len(df))
 
     avg_basket = total_sales / total_txns if total_txns > 0 else float(np.nan)
+
+    # Find location column for use throughout dashboard
+    location_col = None
+    for col in df.columns:
+        if any(word in col.lower() for word in ['location', 'store', 'shop', 'site']):
+            location_col = col
+            break
+
+    # Claude AI Assistant (at top for easy access)
+    if ANTHROPIC_AVAILABLE:
+        with st.expander("🤖 Ask Claude About Your Data", expanded=False):
+            # Initialize session state for chat history
+            if "chat_history" not in st.session_state:
+                st.session_state.chat_history = []
+
+            # API key configuration
+            api_key = None
+            if "ANTHROPIC_API_KEY" in st.secrets:
+                api_key = st.secrets["ANTHROPIC_API_KEY"]
+            else:
+                api_key_input = st.text_input(
+                    "Enter your Anthropic API key:",
+                    type="password",
+                    help="Get your API key from https://console.anthropic.com",
+                    key="claude_api_key_top"
+                )
+                if api_key_input:
+                    api_key = api_key_input
+                st.caption("💡 Add to `.streamlit/secrets.toml`: `ANTHROPIC_API_KEY = \"your-key\"`")
+
+            if api_key:
+                # Function to safely execute pandas code against the data
+                def execute_pandas_code(code: str, df: pd.DataFrame, checkins_df: pd.DataFrame, inventory_df: pd.DataFrame) -> str:
+                    """Safely execute pandas code and return results."""
+                    try:
+                        # Create a restricted namespace with only safe operations
+                        namespace = {
+                            'df': df.copy(),
+                            'checkins_df': checkins_df.copy(),
+                            'inventory_df': inventory_df.copy() if not inventory_df.empty else pd.DataFrame(),
+                            'pd': pd,
+                            'np': np,
+                        }
+                        # Execute the code
+                        exec(code, namespace)
+                        # Look for a 'result' variable
+                        if 'result' in namespace:
+                            result = namespace['result']
+                            if isinstance(result, pd.DataFrame):
+                                return result.to_string(max_rows=100)
+                            elif isinstance(result, pd.Series):
+                                return result.to_string()
+                            else:
+                                return str(result)
+                        return "Code executed but no 'result' variable was set."
+                    except Exception as e:
+                        return f"Error executing code: {str(e)}"
+
+                # Generate data context for Claude
+                def generate_data_context_top(df: pd.DataFrame, checkins_df: pd.DataFrame, inventory_df: pd.DataFrame) -> str:
+                    """Generate comprehensive data context for Claude including actual data."""
+                    context_parts = []
+
+                    # === OVERVIEW ===
+                    context_parts.append("=" * 50)
+                    context_parts.append("RETAIL DATA OVERVIEW")
+                    context_parts.append("=" * 50)
+                    context_parts.append(f"Total transactions: {len(df):,}")
+                    if date_col and date_col in df.columns:
+                        context_parts.append(f"Date range: {df[date_col].min().strftime('%Y-%m-%d')} to {df[date_col].max().strftime('%Y-%m-%d')}")
+                    context_parts.append(f"Total revenue: ${total_sales:,.2f}")
+                    context_parts.append(f"Average transaction: ${avg_basket:,.2f}")
+                    context_parts.append(f"Bennies used: ${total_bennies:,.2f} ({bennies_count:,} transactions)")
+
+                    if "unit_cost" in df.columns:
+                        total_cogs = df["unit_cost"].sum()
+                        gross_profit = total_sales - total_cogs
+                        margin = (gross_profit / total_sales * 100) if total_sales > 0 else 0
+                        context_parts.append(f"Total COGS: ${total_cogs:,.2f}")
+                        context_parts.append(f"Gross profit: ${gross_profit:,.2f} ({margin:.1f}% margin)")
+
+                    # === SALES BY LOCATION ===
+                    if location_col and location_col in df.columns:
+                        context_parts.append("\n" + "=" * 50)
+                        context_parts.append("SALES BY LOCATION")
+                        context_parts.append("=" * 50)
+                        loc_agg = df.groupby(location_col).agg({
+                            'purchase_price_w_discount': ['sum', 'mean', 'count'],
+                            'unit_cost': 'sum' if 'unit_cost' in df.columns else 'count'
+                        }).round(2)
+                        loc_agg.columns = ['Revenue', 'Avg_Transaction', 'Transactions', 'COGS']
+                        loc_agg['Margin_%'] = ((loc_agg['Revenue'] - loc_agg['COGS']) / loc_agg['Revenue'] * 100).round(1)
+                        loc_agg = loc_agg.sort_values('Revenue', ascending=False)
+                        context_parts.append(loc_agg.to_string())
+
+                    # === SALES BY CUSTOMER TYPE ===
+                    if "customer_type" in df.columns:
+                        context_parts.append("\n" + "=" * 50)
+                        context_parts.append("SALES BY CUSTOMER TYPE")
+                        context_parts.append("=" * 50)
+                        type_agg = df.groupby("customer_type").agg({
+                            'purchase_price_w_discount': ['sum', 'mean', 'count']
+                        }).round(2)
+                        type_agg.columns = ['Revenue', 'Avg_Transaction', 'Transactions']
+                        type_agg = type_agg.sort_values('Revenue', ascending=False)
+                        context_parts.append(type_agg.to_string())
+
+                    # === MONTHLY TRENDS ===
+                    if date_col and date_col in df.columns:
+                        context_parts.append("\n" + "=" * 50)
+                        context_parts.append("MONTHLY SALES TRENDS")
+                        context_parts.append("=" * 50)
+                        df_temp = df.copy()
+                        df_temp['month'] = df_temp[date_col].dt.to_period('M')
+                        monthly = df_temp.groupby('month').agg({
+                            'purchase_price_w_discount': 'sum',
+                            'invoice_id': 'nunique' if 'invoice_id' in df.columns else 'count'
+                        }).round(2)
+                        monthly.columns = ['Revenue', 'Transactions']
+                        monthly = monthly.tail(12)  # Last 12 months
+                        context_parts.append(monthly.to_string())
+
+                    # === TOP PRODUCTS ===
+                    if "product_name" in df.columns:
+                        context_parts.append("\n" + "=" * 50)
+                        context_parts.append("TOP 20 PRODUCTS BY REVENUE")
+                        context_parts.append("=" * 50)
+                        prod_agg = df.groupby("product_name").agg({
+                            'purchase_price_w_discount': 'sum',
+                            'quantity': 'sum' if 'quantity' in df.columns else 'count',
+                            'unit_cost': 'sum' if 'unit_cost' in df.columns else 'count'
+                        }).round(2)
+                        prod_agg.columns = ['Revenue', 'Qty_Sold', 'COGS']
+                        prod_agg['Margin_%'] = ((prod_agg['Revenue'] - prod_agg['COGS']) / prod_agg['Revenue'] * 100).round(1)
+                        prod_agg = prod_agg.sort_values('Revenue', ascending=False).head(20)
+                        context_parts.append(prod_agg.to_string())
+
+                    # === TOP VENDORS ===
+                    if "vendor_name" in df.columns:
+                        context_parts.append("\n" + "=" * 50)
+                        context_parts.append("TOP 15 VENDORS BY REVENUE")
+                        context_parts.append("=" * 50)
+                        vendor_agg = df.groupby("vendor_name").agg({
+                            'purchase_price_w_discount': 'sum',
+                            'quantity': 'sum' if 'quantity' in df.columns else 'count',
+                            'unit_cost': 'sum' if 'unit_cost' in df.columns else 'count'
+                        }).round(2)
+                        vendor_agg.columns = ['Revenue', 'Qty_Sold', 'COGS']
+                        vendor_agg['Margin_%'] = ((vendor_agg['Revenue'] - vendor_agg['COGS']) / vendor_agg['Revenue'] * 100).round(1)
+                        vendor_agg = vendor_agg.sort_values('Revenue', ascending=False).head(15)
+                        context_parts.append(vendor_agg.to_string())
+
+                    # === CATEGORIES ===
+                    if "revenue_subcategory" in df.columns:
+                        context_parts.append("\n" + "=" * 50)
+                        context_parts.append("SALES BY CATEGORY")
+                        context_parts.append("=" * 50)
+                        cat_agg = df.groupby("revenue_subcategory").agg({
+                            'purchase_price_w_discount': ['sum', 'count'],
+                            'unit_cost': 'sum' if 'unit_cost' in df.columns else 'count'
+                        }).round(2)
+                        cat_agg.columns = ['Revenue', 'Transactions', 'COGS']
+                        cat_agg['Margin_%'] = ((cat_agg['Revenue'] - cat_agg['COGS']) / cat_agg['Revenue'] * 100).round(1)
+                        cat_agg = cat_agg.sort_values('Revenue', ascending=False)
+                        context_parts.append(cat_agg.to_string())
+
+                    # === CHECK-INS DATA ===
+                    if not checkins_df.empty and "checkin_count" in checkins_df.columns:
+                        context_parts.append("\n" + "=" * 50)
+                        context_parts.append("CHECK-INS SUMMARY")
+                        context_parts.append("=" * 50)
+                        total_checkins = checkins_df["checkin_count"].sum()
+                        context_parts.append(f"Total check-ins: {total_checkins:,}")
+
+                        if "customer_type" in checkins_df.columns:
+                            checkin_by_type = checkins_df.groupby("customer_type")["checkin_count"].sum().sort_values(ascending=False)
+                            context_parts.append("\nCheck-ins by customer type:")
+                            context_parts.append(checkin_by_type.to_string())
+
+                        if "check_in_location" in checkins_df.columns:
+                            checkin_by_loc = checkins_df.groupby("check_in_location")["checkin_count"].sum().sort_values(ascending=False)
+                            context_parts.append("\nCheck-ins by location:")
+                            context_parts.append(checkin_by_loc.to_string())
+
+                        # Revenue per check-in by customer type (if we can match)
+                        if "customer_type" in df.columns and "customer_type" in checkins_df.columns:
+                            context_parts.append("\n" + "=" * 50)
+                            context_parts.append("REVENUE PER CHECK-IN BY CUSTOMER TYPE")
+                            context_parts.append("=" * 50)
+                            sales_by_type = df.groupby("customer_type")["purchase_price_w_discount"].sum()
+                            checkins_by_type = checkins_df.groupby("customer_type")["checkin_count"].sum()
+                            rev_per_checkin = (sales_by_type / checkins_by_type).round(2).sort_values(ascending=False)
+                            context_parts.append(rev_per_checkin.to_string())
+
+                    # === INVENTORY DATA ===
+                    if not inventory_df.empty:
+                        context_parts.append("\n" + "=" * 50)
+                        context_parts.append("INVENTORY / STOCK SUMMARY")
+                        context_parts.append("=" * 50)
+
+                        active_inv = inventory_df[inventory_df['active'] == 'Yes'].copy()
+                        active_inv['stock_value'] = active_inv['stock_qty'] * active_inv['unit_cost'].fillna(0)
+
+                        context_parts.append(f"Total active products: {len(active_inv):,}")
+                        context_parts.append(f"Total stock quantity: {active_inv['stock_qty'].sum():,}")
+                        context_parts.append(f"Total stock value: ${active_inv['stock_value'].sum():,.0f}")
+
+                        # Stock by location
+                        context_parts.append("\nStock value by location:")
+                        loc_stock = active_inv.groupby('location')['stock_value'].sum().sort_values(ascending=False)
+                        context_parts.append(loc_stock.to_string())
+
+                        # Top vendors by stock
+                        context_parts.append("\nTop 10 vendors by stock value:")
+                        vendor_stock = active_inv.groupby('vendor')['stock_value'].sum().sort_values(ascending=False).head(10)
+                        context_parts.append(vendor_stock.to_string())
+
+                    # === SAMPLE DATA ROWS ===
+                    context_parts.append("\n" + "=" * 50)
+                    context_parts.append("SAMPLE DATA (Recent 30 transactions)")
+                    context_parts.append("=" * 50)
+                    sample_cols = ['purchase_date', 'product_name', 'vendor_name', 'customer_type',
+                                   'purchase_price_w_discount', 'quantity', 'purchase_location']
+                    sample_cols = [c for c in sample_cols if c in df.columns]
+                    sample_df = df.sort_values(date_col, ascending=False).head(30)[sample_cols]
+                    context_parts.append(sample_df.to_string())
+
+                    context_parts.append(f"\n\nAvailable columns for analysis: {', '.join(df.columns.tolist())}")
+                    if not inventory_df.empty:
+                        context_parts.append(f"Inventory columns: {', '.join(inventory_df.columns.tolist())}")
+
+                    return "\n".join(context_parts)
+
+                # Define the tool for Claude to execute pandas code
+                tools = [
+                    {
+                        "name": "query_data",
+                        "description": """Execute pandas code to query the retail data. You have access to three DataFrames:
+
+1. 'df' - Purchases data with columns: customer_guid, customer_type, purchase_date, product_name, product_id, vendor_name, rev_category, revenue_subcategory, unit_cost, purchase_price_w_discount, discount, quantity, invoice_id, purchase_location
+
+2. 'checkins_df' - Check-ins data with columns: checkin_date, check_in_location, customer_type, checkin_count, unique_customers
+
+3. 'inventory_df' - Inventory/Stock data with columns: location, barcode, vendor, product_name, active, color, size, cost, unit_cost, stock_qty, product_notes
+
+Store your result in a variable called 'result'.""",
+                        "input_schema": {
+                            "type": "object",
+                            "properties": {
+                                "code": {
+                                    "type": "string",
+                                    "description": "Python pandas code to execute. Must store the output in a variable called 'result'. Example: result = inventory_df.groupby('vendor')['stock_qty'].sum().sort_values(ascending=False).head(10)"
+                                }
+                            },
+                            "required": ["code"]
+                        }
+                    }
+                ]
+
+                # Header row with action buttons
+                if st.session_state.chat_history:
+                    col1, col2, col3 = st.columns([5, 1, 1])
+                    with col2:
+                        if st.button("Clear", key="clear_chat_top", use_container_width=True):
+                            st.session_state.chat_history = []
+                            st.rerun()
+                    with col3:
+                        if FPDF_AVAILABLE:
+                            def strip_non_ascii(text):
+                                """Remove ALL non-ASCII characters for PDF compatibility with Helvetica font."""
+                                # Replace common unicode with ASCII equivalents
+                                replacements = {
+                                    '→': '->', '←': '<-', '↑': '^', '↓': 'v',
+                                    '•': '*', '·': '*', '°': ' degrees',
+                                    '"': '"', '"': '"', ''': "'", ''': "'",
+                                    '–': '-', '—': '-', '…': '...',
+                                    '©': '(c)', '®': '(R)', '™': '(TM)',
+                                    '×': 'x', '÷': '/', '±': '+/-',
+                                    '≤': '<=', '≥': '>=', '≠': '!=',
+                                    '✓': '[x]', '✗': '[ ]', '✔': '[x]', '✘': '[ ]',
+                                }
+                                for unicode_char, ascii_equiv in replacements.items():
+                                    text = text.replace(unicode_char, ascii_equiv)
+                                # Remove any remaining non-ASCII characters
+                                return ''.join(char if ord(char) < 128 else ' ' for char in text)
+
+                            def generate_pdf_report(chat_history, total_sales, total_txns, avg_basket, total_bennies):
+                                """Generate a PDF report from the chat analysis."""
+                                from datetime import datetime
+                                pdf = FPDF()
+                                pdf.set_auto_page_break(auto=True, margin=15)
+                                pdf.add_page()
+                                pdf.set_font("Helvetica", "B", 20)
+                                pdf.cell(0, 15, "Retail Data Analysis Report", ln=True, align="C")
+                                pdf.set_font("Helvetica", "", 10)
+                                pdf.cell(0, 8, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True, align="C")
+                                pdf.ln(10)
+                                pdf.set_font("Helvetica", "B", 14)
+                                pdf.cell(0, 10, "Summary Metrics", ln=True)
+                                pdf.set_font("Helvetica", "", 11)
+                                pdf.cell(0, 7, f"Total Sales: ${total_sales:,.2f}", ln=True)
+                                pdf.cell(0, 7, f"Total Transactions: {total_txns:,}", ln=True)
+                                pdf.cell(0, 7, f"Average Basket: ${avg_basket:,.2f}", ln=True)
+                                pdf.cell(0, 7, f"Bennies Used: ${total_bennies:,.2f}", ln=True)
+                                pdf.ln(10)
+                                pdf.set_font("Helvetica", "B", 14)
+                                pdf.cell(0, 10, "Analysis Conversation", ln=True)
+                                pdf.ln(5)
+                                for msg in chat_history:
+                                    clean_content = strip_non_ascii(msg['content'])
+                                    if msg["role"] == "user":
+                                        pdf.set_font("Helvetica", "B", 11)
+                                        pdf.set_text_color(0, 102, 204)
+                                        pdf.multi_cell(0, 6, f"Q: {clean_content}")
+                                    else:
+                                        pdf.set_font("Helvetica", "", 10)
+                                        pdf.set_text_color(0, 0, 0)
+                                        pdf.multi_cell(0, 5, f"A: {clean_content}")
+                                    pdf.ln(5)
+                                return bytes(pdf.output())
+
+                            try:
+                                pdf_bytes = generate_pdf_report(
+                                    st.session_state.chat_history,
+                                    total_sales, total_txns, avg_basket, total_bennies
+                                )
+                                st.download_button(
+                                    label="PDF",
+                                    data=pdf_bytes,
+                                    file_name=f"retail_analysis_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.pdf",
+                                    mime="application/pdf",
+                                    use_container_width=True
+                                )
+                            except Exception as pdf_error:
+                                st.error(f"PDF error: {str(pdf_error)[:50]}")
+
+                # Display chat history in a scrollable container
+                chat_container = st.container(height=400)
+                with chat_container:
+                    if st.session_state.chat_history:
+                        for msg in st.session_state.chat_history:
+                            if msg["role"] == "user":
+                                with st.chat_message("user"):
+                                    st.write(msg['content'])
+                            else:
+                                with st.chat_message("assistant"):
+                                    st.write(msg['content'])
+                    else:
+                        st.caption("Ask me anything about your retail data. I can query the full dataset.")
+
+                # Chat input at the bottom
+                user_question = st.chat_input(
+                    "Ask about your data...",
+                    key="claude_chat_input"
+                )
+
+                if user_question:
+                    st.session_state.chat_history.append({"role": "user", "content": user_question})
+                    data_context = generate_data_context_top(df, checkins_df, inventory_df)
+
+                    try:
+                        client = anthropic.Anthropic(api_key=api_key)
+
+                        # Build system message with data context
+                        inv_rows = len(inventory_df) if not inventory_df.empty else 0
+                        system_message = f"""You are a retail data analyst with FULL ACCESS to query the actual data using pandas.
+
+DATA SUMMARY:
+{data_context}
+
+You have access to the query_data tool which lets you execute ANY pandas code against the real data.
+- 'df' = purchases data ({len(df):,} rows)
+- 'checkins_df' = check-ins data ({len(checkins_df):,} rows)
+- 'inventory_df' = inventory/stock data ({inv_rows:,} rows)
+
+ALWAYS use the query_data tool to get exact numbers. Don't guess or estimate - query the data!
+Store results in a 'result' variable. Be thorough in your analysis."""
+
+                        # Build messages
+                        messages = []
+                        for msg in st.session_state.chat_history:
+                            messages.append({"role": msg["role"], "content": msg["content"]})
+
+                        with st.spinner("Analyzing data..."):
+                            # Initial API call
+                            response = client.messages.create(
+                                model="claude-sonnet-4-5-20250929",
+                                max_tokens=4000,
+                                system=system_message,
+                                tools=tools,
+                                messages=messages
+                            )
+
+                            # Process tool calls in a loop
+                            while response.stop_reason == "tool_use":
+                                # Find tool use blocks
+                                tool_results = []
+                                assistant_content = response.content
+
+                                for block in response.content:
+                                    if block.type == "tool_use":
+                                        tool_name = block.name
+                                        tool_input = block.input
+
+                                        if tool_name == "query_data":
+                                            # Execute the pandas code
+                                            code = tool_input.get("code", "")
+                                            query_result = execute_pandas_code(code, df, checkins_df, inventory_df)
+                                            tool_results.append({
+                                                "type": "tool_result",
+                                                "tool_use_id": block.id,
+                                                "content": query_result
+                                            })
+
+                                # Add assistant message and tool results to conversation
+                                messages.append({"role": "assistant", "content": assistant_content})
+                                messages.append({"role": "user", "content": tool_results})
+
+                                # Continue the conversation
+                                response = client.messages.create(
+                                    model="claude-sonnet-4-5-20250929",
+                                    max_tokens=4000,
+                                    system=system_message,
+                                    tools=tools,
+                                    messages=messages
+                                )
+
+                            # Extract final text response
+                            final_response = ""
+                            for block in response.content:
+                                if hasattr(block, "text"):
+                                    final_response += block.text
+
+                            st.session_state.chat_history.append({"role": "assistant", "content": final_response})
+                            st.rerun()  # Refresh to show new message
+
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
+                        import traceback
+                        st.error(traceback.format_exc())
+
+            else:
+                st.info("Enter your Anthropic API key above to chat with Claude")
+    else:
+        with st.expander("🤖 Claude AI Assistant"):
+            st.info("Install `anthropic` package: `pip install anthropic`")
+
+    # ===========================================
+    # ADJUSTED GROSS PROFIT KPI TRACKING SECTION
+    # ===========================================
+    # Goal: Increase Adjusted Gross Profit from $279,879 (S1 2025) to $307,866 (S1 2026) = 10% growth
+    # Formula: Adjusted Gross Profit = Revenue (before bennies) - Cost of Goods Sold
+    # Semester Definitions: S1 = Nov-Apr, S2 = May-Oct
+
+    st.markdown("---")
+    st.subheader("Adjusted Gross Profit KPI Tracker")
+
+    # KPI Configuration
+    KPI_BASELINE = 279879  # S1 2025 baseline
+    KPI_TARGET = 307866    # S1 2026 target (10% growth)
+    KPI_GROWTH_TARGET = 0.10  # 10% growth target
+
+    # Semester definition helper functions
+    def get_semester_label(date):
+        """Get semester label for a date. S1=Nov-Apr, S2=May-Oct"""
+        month = date.month
+        year = date.year
+        if month >= 11:  # Nov-Dec belongs to S1 of next year
+            return f"S1 {year + 1}"
+        elif month <= 4:  # Jan-Apr belongs to S1 of current year
+            return f"S1 {year}"
+        else:  # May-Oct belongs to S2 of current year
+            return f"S2 {year}"
+
+    def get_semester_dates(semester_label):
+        """Get start and end dates for a semester label like 'S1 2025'"""
+        parts = semester_label.split()
+        sem = parts[0]
+        year = int(parts[1])
+        if sem == "S1":
+            # S1 runs Nov (prev year) through Apr (this year)
+            start = pd.Timestamp(f"{year-1}-11-01")
+            end = pd.Timestamp(f"{year}-04-30 23:59:59")
+        else:  # S2
+            # S2 runs May through Oct (same year)
+            start = pd.Timestamp(f"{year}-05-01")
+            end = pd.Timestamp(f"{year}-10-31 23:59:59")
+        return start, end
+
+    def get_prior_year_semester(semester_label):
+        """Get the same semester from prior year"""
+        parts = semester_label.split()
+        sem = parts[0]
+        year = int(parts[1])
+        return f"{sem} {year - 1}"
+
+    # Find cost column
+    cost_col_kpi = None
+    for col in df.columns:
+        if 'cost' in col.lower() or 'cogs' in col.lower() or 'wholesale' in col.lower():
+            cost_col_kpi = col
+            break
+
+    # Use df_original for semester calculations to get full data
+    df_kpi_full = df_original.copy()
+    if date_col and date_col in df_kpi_full.columns:
+        df_kpi_full[date_col] = pd.to_datetime(df_kpi_full[date_col])
+        if df_kpi_full[date_col].dt.tz is not None:
+            df_kpi_full[date_col] = df_kpi_full[date_col].dt.tz_localize(None)
+
+    # Add semester labels to data
+    if date_col and date_col in df_kpi_full.columns:
+        df_kpi_full['semester'] = df_kpi_full[date_col].apply(get_semester_label)
+
+        # Filter out bennies for AGP calculation
+        if 'revenue_subcategory' in df_kpi_full.columns:
+            df_kpi_no_bennies = df_kpi_full[~df_kpi_full['revenue_subcategory'].str.contains('Member Bennies', case=False, na=False)]
+            df_kpi_bennies = df_kpi_full[df_kpi_full['revenue_subcategory'].str.contains('Member Bennies', case=False, na=False)]
+        else:
+            df_kpi_no_bennies = df_kpi_full
+            df_kpi_bennies = pd.DataFrame()
+
+        # Get available semesters
+        available_semesters = sorted(df_kpi_no_bennies['semester'].unique(), reverse=True)
+
+        # Semester selector
+        sem_col1, sem_col2 = st.columns([2, 4])
+        with sem_col1:
+            selected_semester = st.selectbox(
+                "Select Semester",
+                available_semesters,
+                index=0,
+                help="S1 = Nov-Apr, S2 = May-Oct"
+            )
+
+        # Get prior year semester for comparison
+        prior_semester = get_prior_year_semester(selected_semester)
+
+        # Check if semester is in progress (for year-to-date comparison)
+        today = pd.Timestamp.now()
+        sem_start, sem_end = get_semester_dates(selected_semester)
+        is_in_progress = sem_start <= today <= sem_end
+
+        # Get current semester data
+        current_sem_data = df_kpi_no_bennies[df_kpi_no_bennies['semester'] == selected_semester]
+
+        # For in-progress semesters, filter prior year to same date range (year-to-date comparison)
+        if is_in_progress and not current_sem_data.empty:
+            # Get the max date in current semester data
+            max_current_date = current_sem_data[date_col].max()
+            current_day_of_semester = (max_current_date - sem_start).days
+
+            # Get prior semester date range and filter to same point in time
+            prior_start, prior_end = get_semester_dates(prior_semester)
+            prior_ytd_end = prior_start + pd.Timedelta(days=current_day_of_semester)
+
+            prior_sem_data = df_kpi_no_bennies[
+                (df_kpi_no_bennies['semester'] == prior_semester) &
+                (df_kpi_no_bennies[date_col] <= prior_ytd_end)
+            ]
+            prior_bennies_data = df_kpi_bennies[
+                (df_kpi_bennies['semester'] == prior_semester) &
+                (df_kpi_bennies[date_col] <= prior_ytd_end)
+            ] if not df_kpi_bennies.empty else pd.DataFrame()
+
+            comparison_label = f"{prior_semester} (to date)"
+        else:
+            prior_sem_data = df_kpi_no_bennies[df_kpi_no_bennies['semester'] == prior_semester]
+            prior_bennies_data = df_kpi_bennies[df_kpi_bennies['semester'] == prior_semester] if not df_kpi_bennies.empty else pd.DataFrame()
+            comparison_label = prior_semester
+
+        # Current semester metrics
+        current_revenue = current_sem_data['purchase_price_w_discount'].sum() if not current_sem_data.empty else 0
+        current_cogs = current_sem_data[cost_col_kpi].sum() if cost_col_kpi and not current_sem_data.empty else 0
+        current_adj_gross_profit = current_revenue - current_cogs
+        current_txns = current_sem_data['invoice_id'].nunique() if 'invoice_id' in current_sem_data.columns else 0
+        current_bennies = abs(df_kpi_bennies[df_kpi_bennies['semester'] == selected_semester]['purchase_price_w_discount'].sum()) if not df_kpi_bennies.empty else 0
+
+        # Prior semester metrics (year-to-date if in progress)
+        prior_revenue = prior_sem_data['purchase_price_w_discount'].sum() if not prior_sem_data.empty else 0
+        prior_cogs = prior_sem_data[cost_col_kpi].sum() if cost_col_kpi and not prior_sem_data.empty else 0
+        prior_adj_gross_profit = prior_revenue - prior_cogs
+        prior_txns = prior_sem_data['invoice_id'].nunique() if 'invoice_id' in prior_sem_data.columns else 0
+        prior_bennies = abs(prior_bennies_data['purchase_price_w_discount'].sum()) if not prior_bennies_data.empty else 0
+
+        # YoY changes
+        agp_yoy_change = current_adj_gross_profit - prior_adj_gross_profit
+        agp_yoy_pct = (agp_yoy_change / prior_adj_gross_profit * 100) if prior_adj_gross_profit != 0 else 0
+        revenue_yoy_pct = ((current_revenue - prior_revenue) / prior_revenue * 100) if prior_revenue != 0 else 0
+        cogs_yoy_pct = ((current_cogs - prior_cogs) / prior_cogs * 100) if prior_cogs != 0 else 0
+        txns_yoy_pct = ((current_txns - prior_txns) / prior_txns * 100) if prior_txns != 0 else 0
+
+        # Progress toward target (only relevant for S1 2026)
+        is_target_semester = selected_semester == "S1 2026"
+        progress_toward_target = (current_adj_gross_profit / KPI_TARGET) * 100 if KPI_TARGET > 0 else 0
+        remaining_to_target = KPI_TARGET - current_adj_gross_profit
+
+        # Main KPI Display
+        if is_in_progress:
+            st.markdown(f"### {selected_semester} Performance *(In Progress)*")
+            st.caption(f"YoY comparison to same point in {prior_semester} (through {max_current_date.strftime('%b %d')})")
+
+            # Calculate semester progress in days for use later
+            total_semester_days = (sem_end - sem_start).days
+            days_elapsed = (max_current_date - sem_start).days + 1
+            semester_progress_pct = (days_elapsed / total_semester_days) * 100
+        else:
+            st.markdown(f"### {selected_semester} Performance")
+
+        kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
+
+        with kpi_col1:
+            delta_color = "normal" if agp_yoy_pct >= 0 else "inverse"
+            st.metric(
+                "Adjusted Gross Profit",
+                f"${current_adj_gross_profit:,.0f}",
+                delta=f"{agp_yoy_pct:+.1f}% vs {comparison_label}",
+                delta_color=delta_color,
+                help="Revenue (ex. bennies) minus Cost of Goods Sold"
+            )
+
+        with kpi_col2:
+            if is_target_semester:
+                if remaining_to_target > 0:
+                    st.metric(
+                        "Target: $307,866",
+                        f"${remaining_to_target:,.0f} to go",
+                        delta=f"{progress_toward_target:.1f}% complete",
+                        delta_color="off"
+                    )
+                else:
+                    st.metric(
+                        "Target: $307,866",
+                        "TARGET MET!",
+                        delta=f"+${-remaining_to_target:,.0f} above",
+                        delta_color="normal"
+                    )
+            else:
+                # Show baseline comparison for other semesters
+                baseline_diff = current_adj_gross_profit - KPI_BASELINE
+                st.metric(
+                    f"vs S1 2025 Baseline",
+                    f"${KPI_BASELINE:,}",
+                    delta=f"${baseline_diff:+,.0f}",
+                    delta_color="normal" if baseline_diff >= 0 else "inverse"
+                )
+
+        with kpi_col3:
+            # For in-progress semesters, show semester progress bar first
+            if is_in_progress:
+                st.caption(f"**Semester:** {days_elapsed}/{total_semester_days} days ({semester_progress_pct:.0f}%)")
+                st.progress(min(semester_progress_pct / 100, 1.0))
+
+            # Progress bar for target semester
+            if is_target_semester:
+                progress_pct = min(progress_toward_target, 100)
+                st.caption(f"**Target:** {progress_pct:.1f}% of ${KPI_TARGET:,}")
+                st.progress(progress_pct / 100)
+            elif not is_in_progress:
+                st.metric(
+                    "Gross Margin",
+                    f"{(current_adj_gross_profit / current_revenue * 100):.1f}%" if current_revenue > 0 else "N/A",
+                    help="Adjusted Gross Profit / Revenue"
+                )
+
+        with kpi_col4:
+            st.metric(
+                f"{comparison_label} AGP",
+                f"${prior_adj_gross_profit:,.0f}",
+                help="Prior year same period for comparison" + (" (year-to-date)" if is_in_progress else "")
+            )
+
+        # YoY Comparison Section
+        st.markdown("---")
+        st.markdown(f"#### Year-over-Year Comparison: {selected_semester} vs {comparison_label}")
+
+        yoy_col1, yoy_col2, yoy_col3, yoy_col4, yoy_col5 = st.columns(5)
+
+        with yoy_col1:
+            delta_color = "normal" if revenue_yoy_pct >= 0 else "inverse"
+            st.metric(
+                "Revenue",
+                f"${current_revenue:,.0f}",
+                delta=f"{revenue_yoy_pct:+.1f}% YoY",
+                delta_color=delta_color,
+                help=f"{comparison_label}: ${prior_revenue:,.0f}"
+            )
+
+        with yoy_col2:
+            # For COGS, lower is better
+            delta_color = "inverse" if cogs_yoy_pct >= 0 else "normal"
+            st.metric(
+                "COGS",
+                f"${current_cogs:,.0f}",
+                delta=f"{cogs_yoy_pct:+.1f}% YoY",
+                delta_color=delta_color,
+                help=f"{comparison_label}: ${prior_cogs:,.0f}"
+            )
+
+        with yoy_col3:
+            bennies_yoy_pct = ((current_bennies - prior_bennies) / prior_bennies * 100) if prior_bennies != 0 else 0
+            st.metric(
+                "Bennies Used",
+                f"${current_bennies:,.0f}",
+                delta=f"{bennies_yoy_pct:+.1f}% YoY",
+                delta_color="off",
+                help=f"{comparison_label}: ${prior_bennies:,.0f}"
+            )
+
+        with yoy_col4:
+            delta_color = "normal" if txns_yoy_pct >= 0 else "inverse"
+            st.metric(
+                "Transactions",
+                f"{current_txns:,}",
+                delta=f"{txns_yoy_pct:+.1f}% YoY",
+                delta_color=delta_color,
+                help=f"{comparison_label}: {prior_txns:,}"
+            )
+
+        with yoy_col5:
+            # Calculate $/Check-in for both periods (year-to-date for in-progress)
+            if not checkins_df.empty and 'checkin_count' in checkins_df.columns:
+                checkins_temp = checkins_df.copy()
+                checkins_temp['checkin_date'] = pd.to_datetime(checkins_temp['checkin_date'])
+                checkins_temp['semester'] = checkins_temp['checkin_date'].apply(get_semester_label)
+
+                current_checkins = checkins_temp[checkins_temp['semester'] == selected_semester]['checkin_count'].sum()
+
+                # For in-progress semesters, filter prior checkins to same date range
+                if is_in_progress:
+                    prior_checkins_data = checkins_temp[
+                        (checkins_temp['semester'] == prior_semester) &
+                        (checkins_temp['checkin_date'] <= prior_ytd_end)
+                    ]
+                    prior_checkins = prior_checkins_data['checkin_count'].sum()
+                else:
+                    prior_checkins = checkins_temp[checkins_temp['semester'] == prior_semester]['checkin_count'].sum()
+
+                current_dpc = current_revenue / current_checkins if current_checkins > 0 else 0
+                prior_dpc = prior_revenue / prior_checkins if prior_checkins > 0 else 0
+                dpc_yoy_pct = ((current_dpc - prior_dpc) / prior_dpc * 100) if prior_dpc > 0 else 0
+
+                delta_color = "normal" if dpc_yoy_pct >= 0 else "inverse"
+                st.metric(
+                    "$/Check-in",
+                    f"${current_dpc:.2f}",
+                    delta=f"{dpc_yoy_pct:+.1f}% YoY",
+                    delta_color=delta_color,
+                    help=f"{comparison_label}: ${prior_dpc:.2f} ({current_checkins:,} check-ins)"
+                )
+            else:
+                st.metric("$/Check-in", "N/A", help="Check-ins data not available")
+
+        # Monthly breakdown within the semester
+        with st.expander("Monthly Breakdown", expanded=True):
+            st.markdown(f"##### Monthly Adjusted Gross Profit - {selected_semester}")
+
+            if date_col and cost_col_kpi:
+                # Get semester date range
+                sem_start, sem_end = get_semester_dates(selected_semester)
+                prior_start, prior_end = get_semester_dates(prior_semester)
+
+                # Group by month for current semester
+                df_monthly_kpi = df_kpi_no_bennies[df_kpi_no_bennies['semester'] == selected_semester].copy()
+                df_monthly_kpi['month'] = df_monthly_kpi[date_col].dt.to_period('M')
+
+                monthly_kpi = df_monthly_kpi.groupby('month').agg({
+                    'purchase_price_w_discount': 'sum',
+                    cost_col_kpi: 'sum',
+                    'invoice_id': 'nunique'
+                }).reset_index()
+
+                monthly_kpi.columns = ['Month', 'Revenue', 'COGS', 'Transactions']
+                monthly_kpi['Adjusted_Gross_Profit'] = monthly_kpi['Revenue'] - monthly_kpi['COGS']
+                monthly_kpi['Margin_%'] = (monthly_kpi['Adjusted_Gross_Profit'] / monthly_kpi['Revenue'] * 100).round(1)
+                monthly_kpi['Month_Str'] = monthly_kpi['Month'].astype(str)
+
+                # Get prior year monthly data for comparison
+                df_monthly_prior = df_kpi_no_bennies[df_kpi_no_bennies['semester'] == prior_semester].copy()
+                if not df_monthly_prior.empty:
+                    df_monthly_prior['month'] = df_monthly_prior[date_col].dt.to_period('M')
+                    df_monthly_prior['month_num'] = df_monthly_prior[date_col].dt.month
+
+                    monthly_prior = df_monthly_prior.groupby('month_num').agg({
+                        'purchase_price_w_discount': 'sum',
+                        cost_col_kpi: 'sum'
+                    }).reset_index()
+                    monthly_prior.columns = ['month_num', 'Prior_Revenue', 'Prior_COGS']
+                    monthly_prior['Prior_AGP'] = monthly_prior['Prior_Revenue'] - monthly_prior['Prior_COGS']
+
+                    # Add month_num to current for joining
+                    monthly_kpi['month_num'] = monthly_kpi['Month'].apply(lambda x: x.month)
+                    monthly_kpi = monthly_kpi.merge(monthly_prior[['month_num', 'Prior_AGP']], on='month_num', how='left')
+                    monthly_kpi['YoY_Change_%'] = ((monthly_kpi['Adjusted_Gross_Profit'] - monthly_kpi['Prior_AGP']) / monthly_kpi['Prior_AGP'] * 100).round(1)
+                else:
+                    monthly_kpi['Prior_AGP'] = 0
+                    monthly_kpi['YoY_Change_%'] = 0
+
+                if not monthly_kpi.empty:
+                    # Create bar chart with YoY comparison
+                    fig_kpi = px.bar(
+                        monthly_kpi,
+                        x='Month_Str',
+                        y='Adjusted_Gross_Profit',
+                        title=f'Monthly Adjusted Gross Profit - {selected_semester}',
+                        labels={'Month_Str': 'Month', 'Adjusted_Gross_Profit': 'Adjusted Gross Profit ($)'},
+                        text=monthly_kpi['Adjusted_Gross_Profit'].apply(lambda x: f'${x:,.0f}')
+                    )
+
+                    # Add target line if this is the target semester
+                    if is_target_semester:
+                        monthly_target = KPI_TARGET / 6
+                        fig_kpi.add_hline(
+                            y=monthly_target,
+                            line_dash="dash",
+                            line_color="red",
+                            annotation_text=f"Monthly Target: ${monthly_target:,.0f}",
+                            annotation_position="top right"
+                        )
+
+                    fig_kpi.update_traces(textposition='outside')
+                    fig_kpi.update_layout(showlegend=False, height=350)
+                    st.plotly_chart(fig_kpi, use_container_width=True)
+
+                    # Monthly data table with YoY
+                    st.markdown("##### Monthly Detail with YoY Comparison")
+                    display_cols = ['Month_Str', 'Revenue', 'COGS', 'Adjusted_Gross_Profit', 'Margin_%', 'Transactions']
+                    if 'Prior_AGP' in monthly_kpi.columns:
+                        display_cols.extend(['Prior_AGP', 'YoY_Change_%'])
+
+                    display_kpi_monthly = monthly_kpi[display_cols].copy()
+                    col_names = ['Month', 'Revenue', 'COGS', 'Adj. Gross Profit', 'Margin %', 'Transactions']
+                    if 'Prior_AGP' in monthly_kpi.columns:
+                        col_names.extend([f'{prior_semester} AGP', 'YoY %'])
+                    display_kpi_monthly.columns = col_names
+
+                    format_dict = {
+                        'Revenue': '${:,.0f}',
+                        'COGS': '${:,.0f}',
+                        'Adj. Gross Profit': '${:,.0f}',
+                        'Margin %': '{:.1f}%',
+                        'Transactions': '{:,}'
+                    }
+                    if f'{prior_semester} AGP' in display_kpi_monthly.columns:
+                        format_dict[f'{prior_semester} AGP'] = '${:,.0f}'
+                        format_dict['YoY %'] = '{:+.1f}%'
+
+                    st.dataframe(
+                        display_kpi_monthly.style.format(format_dict),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                    # Cumulative progress chart (for target semester)
+                    if is_target_semester:
+                        st.markdown("##### Cumulative Progress Toward S1 2026 Target")
+                        monthly_kpi['Cumulative_AGP'] = monthly_kpi['Adjusted_Gross_Profit'].cumsum()
+
+                        fig_cumulative = px.line(
+                            monthly_kpi,
+                            x='Month_Str',
+                            y='Cumulative_AGP',
+                            markers=True,
+                            title='Cumulative Adjusted Gross Profit vs Target'
+                        )
+
+                        fig_cumulative.add_hline(
+                            y=KPI_TARGET,
+                            line_dash="dash",
+                            line_color="green",
+                            annotation_text=f"S1 2026 Target: ${KPI_TARGET:,}",
+                            annotation_position="top right"
+                        )
+
+                        fig_cumulative.add_hline(
+                            y=KPI_BASELINE,
+                            line_dash="dot",
+                            line_color="gray",
+                            annotation_text=f"S1 2025 Baseline: ${KPI_BASELINE:,}",
+                            annotation_position="bottom right"
+                        )
+
+                        fig_cumulative.update_layout(
+                            yaxis_title='Cumulative Adjusted Gross Profit ($)',
+                            xaxis_title='Month',
+                            height=350
+                        )
+                        st.plotly_chart(fig_cumulative, use_container_width=True)
+
+        # ==========================================
+        # MONTHLY ASSESSMENT SECTION
+        # ==========================================
+        with st.expander("Monthly Assessment", expanded=False):
+            st.markdown("#### Monthly KPI Assessment")
+
+            # Month selector for assessment
+            if date_col and cost_col_kpi:
+                available_months = sorted(df_kpi_no_bennies[date_col].dt.to_period('M').unique(), reverse=True)
+                available_month_strs = [str(m) for m in available_months]
+
+                assess_col1, assess_col2 = st.columns([1, 3])
+                with assess_col1:
+                    selected_assess_month = st.selectbox(
+                        "Select Month to Assess",
+                        available_month_strs,
+                        index=0,
+                        key="assess_month_select"
+                    )
+
+                # Get data for selected month and previous month
+                selected_period = pd.Period(selected_assess_month)
+                prev_period = selected_period - 1
+
+                month_data = df_kpi_no_bennies[df_kpi_no_bennies[date_col].dt.to_period('M') == selected_period]
+                prev_month_data = df_kpi_no_bennies[df_kpi_no_bennies[date_col].dt.to_period('M') == prev_period]
+
+                # Bennies for the months
+                month_bennies = df_kpi_bennies[df_kpi_bennies[date_col].dt.to_period('M') == selected_period] if not df_kpi_bennies.empty else pd.DataFrame()
+                prev_bennies = df_kpi_bennies[df_kpi_bennies[date_col].dt.to_period('M') == prev_period] if not df_kpi_bennies.empty else pd.DataFrame()
+
+                # Calculate metrics for selected month
+                month_revenue = month_data['purchase_price_w_discount'].sum() if not month_data.empty else 0
+                month_cogs = month_data[cost_col_kpi].sum() if not month_data.empty else 0
+                month_agp = month_revenue - month_cogs
+                month_txns = month_data['invoice_id'].nunique() if 'invoice_id' in month_data.columns else 0
+                month_bennies_val = abs(month_bennies['purchase_price_w_discount'].sum()) if not month_bennies.empty else 0
+
+                # Calculate metrics for previous month
+                prev_revenue = prev_month_data['purchase_price_w_discount'].sum() if not prev_month_data.empty else 0
+                prev_cogs = prev_month_data[cost_col_kpi].sum() if not prev_month_data.empty else 0
+                prev_agp = prev_revenue - prev_cogs
+                prev_txns = prev_month_data['invoice_id'].nunique() if 'invoice_id' in prev_month_data.columns else 0
+                prev_bennies_val = abs(prev_bennies['purchase_price_w_discount'].sum()) if not prev_bennies.empty else 0
+
+                # Calculate MoM changes
+                agp_mom_change = ((month_agp - prev_agp) / prev_agp * 100) if prev_agp != 0 else 0
+                rev_mom_change = ((month_revenue - prev_revenue) / prev_revenue * 100) if prev_revenue != 0 else 0
+                cogs_mom_change = ((month_cogs - prev_cogs) / prev_cogs * 100) if prev_cogs != 0 else 0
+                txns_mom_change = ((month_txns - prev_txns) / prev_txns * 100) if prev_txns != 0 else 0
+                bennies_mom_change = ((month_bennies_val - prev_bennies_val) / prev_bennies_val * 100) if prev_bennies_val != 0 else 0
+
+                # ---- Q1: Showcase the relevant data/report for this KPI ----
+                st.markdown("---")
+                st.markdown(f"##### 1. KPI Data for {selected_assess_month}")
+
+                data_col1, data_col2, data_col3, data_col4, data_col5 = st.columns(5)
+                with data_col1:
+                    st.metric("Adj. Gross Profit", f"${month_agp:,.0f}",
+                              delta=f"{agp_mom_change:+.1f}% MoM",
+                              delta_color="normal" if agp_mom_change >= 0 else "inverse")
+                with data_col2:
+                    st.metric("Revenue", f"${month_revenue:,.0f}",
+                              delta=f"{rev_mom_change:+.1f}% MoM",
+                              delta_color="normal" if rev_mom_change >= 0 else "inverse")
+                with data_col3:
+                    st.metric("COGS", f"${month_cogs:,.0f}",
+                              delta=f"{cogs_mom_change:+.1f}% MoM",
+                              delta_color="inverse" if cogs_mom_change >= 0 else "normal")
+                with data_col4:
+                    st.metric("Transactions", f"{month_txns:,}",
+                              delta=f"{txns_mom_change:+.1f}% MoM",
+                              delta_color="normal" if txns_mom_change >= 0 else "inverse")
+                with data_col5:
+                    st.metric("Bennies Used", f"${month_bennies_val:,.0f}",
+                              delta=f"{bennies_mom_change:+.1f}% MoM",
+                              delta_color="off")
+
+                # ---- Q2: Notable changes or trends ----
+                st.markdown("---")
+                st.markdown("##### 2. Were there any notable changes or trends?")
+
+                # Auto-detect notable changes (>10% MoM swing) with dollar amounts
+                notable_changes = []
+                agp_diff = month_agp - prev_agp
+                rev_diff = month_revenue - prev_revenue
+                cogs_diff = month_cogs - prev_cogs
+                txns_diff = month_txns - prev_txns
+
+                if abs(agp_mom_change) > 10:
+                    direction = "increased" if agp_mom_change > 0 else "decreased"
+                    notable_changes.append(f"Adjusted Gross Profit {direction} by {abs(agp_mom_change):.1f}% (${abs(agp_diff):,.0f})")
+                if abs(rev_mom_change) > 10:
+                    direction = "increased" if rev_mom_change > 0 else "decreased"
+                    notable_changes.append(f"Revenue {direction} by {abs(rev_mom_change):.1f}% (${abs(rev_diff):,.0f})")
+                if abs(cogs_mom_change) > 10:
+                    direction = "increased" if cogs_mom_change > 0 else "decreased"
+                    notable_changes.append(f"COGS {direction} by {abs(cogs_mom_change):.1f}% (${abs(cogs_diff):,.0f})")
+                if abs(txns_mom_change) > 10:
+                    direction = "increased" if txns_mom_change > 0 else "decreased"
+                    notable_changes.append(f"Transactions {direction} by {abs(txns_mom_change):.1f}% ({abs(txns_diff):,} txns)")
+
+                if notable_changes:
+                    st.info("**Auto-detected changes (>10% MoM):**\n- " + "\n- ".join(notable_changes))
+                else:
+                    st.success("No major swings detected (all metrics within 10% MoM)")
+
+                # Category-level analysis
+                if 'revenue_subcategory' in df_kpi_no_bennies.columns:
+                    st.markdown("**Category Performance:**")
+
+                    # Get category sales for selected month and previous month
+                    month_cat_sales = month_data.groupby('revenue_subcategory')['purchase_price_w_discount'].sum()
+                    prev_cat_sales = prev_month_data.groupby('revenue_subcategory')['purchase_price_w_discount'].sum()
+
+                    # Combine and calculate changes
+                    all_categories = set(month_cat_sales.index) | set(prev_cat_sales.index)
+                    category_changes = []
+
+                    for cat in all_categories:
+                        current = month_cat_sales.get(cat, 0)
+                        previous = prev_cat_sales.get(cat, 0)
+                        if previous > 0:
+                            pct_change = ((current - previous) / previous) * 100
+                            diff = current - previous
+                            if abs(pct_change) > 10:
+                                category_changes.append({
+                                    'Category': cat,
+                                    'Current': current,
+                                    'Previous': previous,
+                                    'Change $': diff,
+                                    'Change %': pct_change
+                                })
+
+                    if category_changes:
+                        # Sort by absolute % change
+                        category_changes.sort(key=lambda x: abs(x['Change %']), reverse=True)
+
+                        # Split into increases and decreases
+                        increases = [c for c in category_changes if c['Change %'] > 0]
+                        decreases = [c for c in category_changes if c['Change %'] < 0]
+
+                        cat_col1, cat_col2 = st.columns(2)
+
+                        with cat_col1:
+                            if increases:
+                                st.markdown("*Categories Up >10%:*")
+                                for c in increases[:5]:  # Top 5
+                                    st.caption(f"**{c['Category']}**: +{c['Change %']:.0f}% (+${c['Change $']:,.0f})")
+                            else:
+                                st.caption("No categories up >10%")
+
+                        with cat_col2:
+                            if decreases:
+                                st.markdown("*Categories Down >10%:*")
+                                for c in decreases[:5]:  # Top 5
+                                    st.caption(f"**{c['Category']}**: {c['Change %']:.0f}% (${c['Change $']:,.0f})")
+                            else:
+                                st.caption("No categories down >10%")
+
+                        # Show full table in expander
+                        with st.expander("View all category changes"):
+                            cat_df = pd.DataFrame(category_changes)
+                            cat_df = cat_df.sort_values('Change %', ascending=False)
+                            cat_df_display = cat_df.copy()
+                            cat_df_display['Current'] = cat_df_display['Current'].apply(lambda x: f"${x:,.0f}")
+                            cat_df_display['Previous'] = cat_df_display['Previous'].apply(lambda x: f"${x:,.0f}")
+                            cat_df_display['Change $'] = cat_df_display['Change $'].apply(lambda x: f"${x:+,.0f}")
+                            cat_df_display['Change %'] = cat_df_display['Change %'].apply(lambda x: f"{x:+.1f}%")
+                            st.dataframe(cat_df_display, use_container_width=True, hide_index=True)
+                    else:
+                        st.caption("All categories within normal range (within 10% MoM)")
+
+                trends_input = st.text_area(
+                    "Additional observations on trends:",
+                    key=f"trends_{selected_assess_month}",
+                    placeholder="Describe any patterns you've noticed..."
+                )
+
+                # ---- Q3: What caused them ----
+                st.markdown("---")
+                st.markdown("##### 3. What do you think caused them?")
+                causes_input = st.text_area(
+                    "Root cause analysis:",
+                    key=f"causes_{selected_assess_month}",
+                    placeholder="What factors contributed to the changes observed?"
+                )
+
+                # ---- Q4: Previous actions effect ----
+                st.markdown("---")
+                st.markdown("##### 4. Have your previous actions affected your data in the way you hoped?")
+                actions_effect = st.text_area(
+                    "Impact of previous actions:",
+                    key=f"actions_effect_{selected_assess_month}",
+                    placeholder="Did the initiatives from last month produce expected results?"
+                )
+
+                # ---- Q5: On track to reach KPI ----
+                st.markdown("---")
+                st.markdown("##### 5. Are you on track to reach your KPI by the identified deadline?")
+
+                # Calculate pace
+                if is_in_progress and is_target_semester:
+                    # Calculate expected AGP at this point vs actual
+                    expected_agp_at_pace = KPI_TARGET * (semester_progress_pct / 100)
+                    pace_diff = current_adj_gross_profit - expected_agp_at_pace
+                    pace_pct = (current_adj_gross_profit / expected_agp_at_pace * 100) if expected_agp_at_pace > 0 else 0
+
+                    if pace_diff >= 0:
+                        st.success(f"**On Track:** You're ${pace_diff:,.0f} ahead of pace ({pace_pct:.0f}% of expected)")
+                        st.caption(f"At {semester_progress_pct:.0f}% through the semester, expected AGP would be ${expected_agp_at_pace:,.0f}. Current: ${current_adj_gross_profit:,.0f}")
+                    else:
+                        st.warning(f"**Behind Pace:** You're ${abs(pace_diff):,.0f} behind ({pace_pct:.0f}% of expected)")
+                        st.caption(f"At {semester_progress_pct:.0f}% through the semester, expected AGP would be ${expected_agp_at_pace:,.0f}. Current: ${current_adj_gross_profit:,.0f}")
+
+                    # Monthly run rate needed
+                    if remaining_to_target > 0:
+                        months_remaining = 6 - (semester_progress_pct / 100 * 6)
+                        if months_remaining > 0:
+                            monthly_needed = remaining_to_target / months_remaining
+                            st.caption(f"To hit target: Need ${monthly_needed:,.0f}/month for remaining {months_remaining:.1f} months")
+                else:
+                    st.info("Pace tracking available for in-progress target semesters (S1 2026)")
+
+                on_track_notes = st.text_area(
+                    "Additional notes on progress:",
+                    key=f"on_track_{selected_assess_month}",
+                    placeholder="Any context on your progress toward the goal?"
+                )
+
+                # ---- Q6: Actions to continue progress ----
+                st.markdown("---")
+                st.markdown("##### 6. What actions will you take to continue making progress towards your KPI?")
+                next_actions = st.text_area(
+                    "Planned actions for next month:",
+                    key=f"next_actions_{selected_assess_month}",
+                    placeholder="List specific initiatives or changes you'll implement..."
+                )
+
+                # ---- Q7: Supporting metrics comparison ----
+                st.markdown("---")
+                st.markdown("##### 7. How do the supporting metrics compare to the previous month?")
+
+                comparison_df = pd.DataFrame({
+                    'Metric': ['Revenue', 'COGS', 'Adj. Gross Profit', 'Transactions', 'Bennies Used'],
+                    selected_assess_month: [f"${month_revenue:,.0f}", f"${month_cogs:,.0f}", f"${month_agp:,.0f}", f"{month_txns:,}", f"${month_bennies_val:,.0f}"],
+                    str(prev_period): [f"${prev_revenue:,.0f}", f"${prev_cogs:,.0f}", f"${prev_agp:,.0f}", f"{prev_txns:,}", f"${prev_bennies_val:,.0f}"],
+                    'Change': [f"{rev_mom_change:+.1f}%", f"{cogs_mom_change:+.1f}%", f"{agp_mom_change:+.1f}%", f"{txns_mom_change:+.1f}%", f"{bennies_mom_change:+.1f}%"]
+                })
+                st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+
+                # ---- Q8: Retail credits (bennies) spent ----
+                st.markdown("---")
+                st.markdown("##### 8. What was the value of retail credits spent in the previous month?")
+                st.metric(f"Bennies Used in {prev_period}", f"${prev_bennies_val:,.0f}")
+
+                # ---- Q9: Sales or promotions ----
+                st.markdown("---")
+                st.markdown("##### 9. Did any sales or promotions take place during the prior month?")
+                promotions_input = st.text_area(
+                    "Sales/promotions in the prior month:",
+                    key=f"promotions_{selected_assess_month}",
+                    placeholder="List any sales events, promotions, or special offers that ran..."
+                )
+
+                # ---- Export Assessment ----
+                st.markdown("---")
+                if st.button("Generate Assessment Summary", key="gen_assessment"):
+                    # Build category changes text for export
+                    cat_changes_text = ""
+                    if 'revenue_subcategory' in df_kpi_no_bennies.columns and category_changes:
+                        increases_text = [f"  + {c['Category']}: +{c['Change %']:.0f}% (+${c['Change $']:,.0f})" for c in category_changes if c['Change %'] > 0]
+                        decreases_text = [f"  - {c['Category']}: {c['Change %']:.0f}% (${c['Change $']:,.0f})" for c in category_changes if c['Change %'] < 0]
+                        if increases_text:
+                            cat_changes_text += "\nCategories Up >10%:\n" + chr(10).join(increases_text[:5])
+                        if decreases_text:
+                            cat_changes_text += "\n\nCategories Down >10%:\n" + chr(10).join(decreases_text[:5])
+                    else:
+                        cat_changes_text = "\nAll categories within normal range"
+
+                    assessment_text = f"""
+MONTHLY KPI ASSESSMENT - {selected_assess_month}
+{'='*50}
+
+1. KPI DATA
+-----------
+Adjusted Gross Profit: ${month_agp:,.0f} ({agp_mom_change:+.1f}% MoM, ${agp_diff:+,.0f})
+Revenue: ${month_revenue:,.0f} ({rev_mom_change:+.1f}% MoM, ${rev_diff:+,.0f})
+COGS: ${month_cogs:,.0f} ({cogs_mom_change:+.1f}% MoM, ${cogs_diff:+,.0f})
+Transactions: {month_txns:,} ({txns_mom_change:+.1f}% MoM, {txns_diff:+,})
+Bennies Used: ${month_bennies_val:,.0f} ({bennies_mom_change:+.1f}% MoM)
+
+2. NOTABLE CHANGES/TRENDS
+-------------------------
+{chr(10).join('- ' + c for c in notable_changes) if notable_changes else 'No major swings detected'}
+{cat_changes_text}
+
+{trends_input if trends_input else '(No additional observations)'}
+
+3. ROOT CAUSES
+--------------
+{causes_input if causes_input else '(Not provided)'}
+
+4. PREVIOUS ACTIONS IMPACT
+--------------------------
+{actions_effect if actions_effect else '(Not provided)'}
+
+5. ON TRACK STATUS
+------------------
+{on_track_notes if on_track_notes else '(Not provided)'}
+
+6. NEXT MONTH ACTIONS
+---------------------
+{next_actions if next_actions else '(Not provided)'}
+
+7. SUPPORTING METRICS vs {prev_period}
+--------------------------------------
+Revenue: ${month_revenue:,.0f} vs ${prev_revenue:,.0f} ({rev_mom_change:+.1f}%)
+COGS: ${month_cogs:,.0f} vs ${prev_cogs:,.0f} ({cogs_mom_change:+.1f}%)
+Transactions: {month_txns:,} vs {prev_txns:,} ({txns_mom_change:+.1f}%)
+
+8. BENNIES (Previous Month)
+---------------------------
+${prev_bennies_val:,.0f}
+
+9. SALES/PROMOTIONS
+-------------------
+{promotions_input if promotions_input else '(Not provided)'}
+
+Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}
+"""
+                    st.text_area("Assessment Summary (copy or download):", assessment_text, height=400)
+                    st.download_button(
+                        "Download Assessment (.txt)",
+                        assessment_text,
+                        file_name=f"kpi_assessment_{selected_assess_month}.txt",
+                        mime="text/plain"
+                    )
+
+    st.markdown("---")
 
     # Display KPIs in 4 columns including bennies
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
@@ -2430,156 +3789,93 @@ def main() -> None:
     else:
         st.info("Subcategory information not available")
 
+    # Inventory / Stock Section
     st.markdown("---")
+    st.subheader("Inventory / Stock Levels")
 
-    # Claude AI Assistant
-    if ANTHROPIC_AVAILABLE:
-        st.subheader("🤖 Ask Claude About Your Data")
+    if not inventory_df.empty:
+        # Filter to active products only
+        active_inventory = inventory_df[inventory_df['active'] == 'Yes'].copy()
 
-        # Initialize session state for chat history
-        if "chat_history" not in st.session_state:
-            st.session_state.chat_history = []
+        # Calculate stock value
+        active_inventory['stock_value'] = active_inventory['stock_qty'] * active_inventory['unit_cost'].fillna(0)
 
-        # API key configuration
-        api_key = None
-        if "ANTHROPIC_API_KEY" in st.secrets:
-            api_key = st.secrets["ANTHROPIC_API_KEY"]
+        # Summary metrics
+        inv_col1, inv_col2, inv_col3, inv_col4 = st.columns(4)
+        total_stock_value = active_inventory['stock_value'].sum()
+        total_stock_qty = active_inventory['stock_qty'].sum()
+        unique_products = active_inventory['product_name'].nunique()
+        unique_vendors = active_inventory['vendor'].nunique()
+
+        inv_col1.metric("Total Stock Value", f"${total_stock_value:,.0f}")
+        inv_col2.metric("Total Units in Stock", f"{total_stock_qty:,}")
+        inv_col3.metric("Unique Products", f"{unique_products:,}")
+        inv_col4.metric("Vendors", f"{unique_vendors:,}")
+
+        # Stock by location
+        st.markdown("##### Stock Value by Location")
+        loc_stock = active_inventory.groupby('location').agg({
+            'stock_value': 'sum',
+            'stock_qty': 'sum',
+            'product_name': 'nunique'
+        }).rename(columns={'product_name': 'unique_products'}).sort_values('stock_value', ascending=False)
+        loc_stock['stock_value'] = loc_stock['stock_value'].apply(lambda x: f"${x:,.0f}")
+        loc_stock['stock_qty'] = loc_stock['stock_qty'].apply(lambda x: f"{x:,}")
+        st.dataframe(loc_stock, use_container_width=True)
+
+        # Top vendors by stock value
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("##### Top 15 Vendors by Stock Value")
+            vendor_stock = active_inventory.groupby('vendor').agg({
+                'stock_value': 'sum',
+                'stock_qty': 'sum'
+            }).sort_values('stock_value', ascending=False).head(15)
+
+            fig_vendor_stock = px.bar(
+                vendor_stock.reset_index(),
+                x='vendor',
+                y='stock_value',
+                title="Stock Value by Vendor"
+            )
+            fig_vendor_stock.update_layout(xaxis_tickangle=-45, yaxis_tickformat="$,.0f")
+            st.plotly_chart(fig_vendor_stock, use_container_width=True)
+
+        with col2:
+            st.markdown("##### Stock Distribution by Location")
+            loc_pie_data = active_inventory.groupby('location')['stock_value'].sum().reset_index()
+            fig_loc_pie = px.pie(
+                loc_pie_data,
+                values='stock_value',
+                names='location',
+                title="Stock Value Distribution"
+            )
+            st.plotly_chart(fig_loc_pie, use_container_width=True)
+
+        # Low stock alerts (products with qty <= 5 but > 0)
+        st.markdown("##### Low Stock Alert (Active Products with 1-5 units)")
+        low_stock = active_inventory[
+            (active_inventory['stock_qty'] > 0) &
+            (active_inventory['stock_qty'] <= 5)
+        ][['location', 'product_name', 'vendor', 'stock_qty', 'unit_cost']].sort_values('stock_qty')
+
+        if not low_stock.empty:
+            st.warning(f"Found {len(low_stock)} products with low stock")
+            st.dataframe(low_stock.head(50), use_container_width=True)
         else:
-            with st.expander("⚙️ Configure API Key"):
-                api_key_input = st.text_input(
-                    "Enter your Anthropic API key:",
-                    type="password",
-                    help="Get your API key from https://console.anthropic.com"
-                )
-                if api_key_input:
-                    api_key = api_key_input
-                st.info("💡 Tip: Add your API key to `.streamlit/secrets.toml` with `ANTHROPIC_API_KEY = \"your-key\"` to avoid entering it each time")
+            st.success("No low stock alerts")
 
-        if api_key:
-            # Generate data context for Claude
-            def generate_data_context(df: pd.DataFrame, date_range: tuple) -> str:
-                """Generate a summary of the data for Claude's context."""
-                context_parts = []
-
-                # Basic stats
-                context_parts.append(f"Dataset Overview:")
-                context_parts.append(f"- Total transactions (excluding bennies): {len(df):,}")
-                context_parts.append(f"- Date range: {date_range[0]} to {date_range[1]}")
-
-                # Revenue metrics (bennies excluded)
-                if "purchase_price_w_discount" in df.columns:
-                    total_revenue = df["purchase_price_w_discount"].sum()
-                    context_parts.append(f"- Total revenue (bennies excluded): ${total_revenue:,.2f}")
-                    context_parts.append(f"- Average transaction: ${df['purchase_price_w_discount'].mean():,.2f}")
-
-                # Bennies tracked separately
-                context_parts.append(f"- Bennies used (tracked separately): ${total_bennies:,.2f} across {bennies_count:,} transactions")
-
-                # COGS and margins
-                cost_col_name = "unit_cost" if "unit_cost" in df.columns else "COGS" if "COGS" in df.columns else None
-                if cost_col_name:
-                    total_cogs = df[cost_col_name].sum()
-                    gross_profit = total_revenue - total_cogs
-                    margin = (gross_profit / total_revenue * 100) if total_revenue > 0 else 0
-                    context_parts.append(f"- Total COGS: ${total_cogs:,.2f}")
-                    context_parts.append(f"- Gross profit: ${gross_profit:,.2f}")
-                    context_parts.append(f"- Gross margin: {margin:.1f}%")
-
-                # Locations
-                if location_col and location_col in df.columns:
-                    locations = df[location_col].unique()
-                    context_parts.append(f"- Locations: {', '.join(str(loc) for loc in locations)}")
-
-                    # Sales by location
-                    location_sales = df.groupby(location_col)["purchase_price_w_discount"].sum().sort_values(ascending=False)
-                    context_parts.append(f"\nSales by location:")
-                    for loc, sales in location_sales.items():
-                        context_parts.append(f"  - {loc}: ${sales:,.2f}")
-
-                # Categories
-                if "revenue_subcategory" in df.columns:
-                    top_categories = df.groupby("revenue_subcategory")["purchase_price_w_discount"].sum().sort_values(ascending=False).head(5)
-                    context_parts.append(f"\nTop 5 categories by sales:")
-                    for cat, sales in top_categories.items():
-                        context_parts.append(f"  - {cat}: ${sales:,.2f}")
-
-                # Available columns
-                context_parts.append(f"\nAvailable data columns: {', '.join(df.columns.tolist())}")
-
-                return "\n".join(context_parts)
-
-            # Chat interface
-            col1, col2 = st.columns([5, 1])
-            with col1:
-                user_question = st.text_input(
-                    "Ask a question about your retail data:",
-                    placeholder="e.g., What were the top-selling products last month? Which location has the best margins?"
-                )
-            with col2:
-                st.write("")  # Spacing
-                st.write("")  # Spacing
-                clear_chat = st.button("Clear Chat")
-
-            if clear_chat:
-                st.session_state.chat_history = []
-                st.rerun()
-
-            if user_question:
-                # Add user message to history
-                st.session_state.chat_history.append({"role": "user", "content": user_question})
-
-                # Prepare context
-                data_context = generate_data_context(df, (df[date_col].min(), df[date_col].max()))
-
-                # Call Claude API
-                try:
-                    client = anthropic.Anthropic(api_key=api_key)
-
-                    # Build message history
-                    messages = []
-
-                    # Add system context as first user message with assistant acknowledgment
-                    if len(st.session_state.chat_history) == 1:
-                        system_context = f"""You are a helpful data analyst assistant. You have access to retail sales data with the following summary:
-
-{data_context}
-
-Please answer questions about this data based on the information provided. If asked to perform calculations or analysis that requires the raw data, explain what insights you can provide based on the summary statistics available. Be concise and focus on actionable insights."""
-
-                        messages.append({"role": "user", "content": system_context})
-                        messages.append({"role": "assistant", "content": "I understand. I'll help analyze your retail data based on the information provided. What would you like to know?"})
-
-                    # Add conversation history
-                    for msg in st.session_state.chat_history:
-                        messages.append({"role": msg["role"], "content": msg["content"]})
-
-                    # Get response
-                    with st.spinner("Claude is thinking..."):
-                        response = client.messages.create(
-                            model="claude-sonnet-4-5-20250929",
-                            max_tokens=2000,
-                            messages=messages
-                        )
-
-                    assistant_message = response.content[0].text
-                    st.session_state.chat_history.append({"role": "assistant", "content": assistant_message})
-
-                except Exception as e:
-                    st.error(f"Error communicating with Claude: {str(e)}")
-
-            # Display chat history
-            if st.session_state.chat_history:
-                st.markdown("### Conversation")
-                for msg in st.session_state.chat_history:
-                    if msg["role"] == "user":
-                        st.markdown(f"**You:** {msg['content']}")
-                    else:
-                        st.markdown(f"**Claude:** {msg['content']}")
-                        st.markdown("---")
-        else:
-            st.info("👆 Please configure your Anthropic API key to use the Claude assistant")
+        # Detailed inventory table
+        with st.expander("View Full Inventory Data"):
+            st.dataframe(
+                active_inventory[['location', 'product_name', 'vendor', 'stock_qty', 'unit_cost', 'stock_value']]
+                .sort_values('stock_value', ascending=False)
+                .head(500),
+                use_container_width=True
+            )
     else:
-        st.info("💡 Install the `anthropic` package to enable the Claude AI assistant: `pip install anthropic`")
+        st.info("Inventory data not available. Run the data refresh to load inventory information.")
 
     st.markdown("---")
     st.write("Data sample")

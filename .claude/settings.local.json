@@ -2,7 +2,18 @@
   "permissions": {
     "allow": [
       "Bash(cp:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git add:*)",
+      "Read(//home/emorillas/**)",
+      "Bash(pkill:*)",
+      "Bash(rm:*)",
+      "Bash(pip install:*)",
+      "Bash(curl:*)",
+      "Bash(timeout 10 streamlit run:*)",
+      "Bash(cat:*)",
+      "Bash(gh repo view:*)"
     ],
     "deny": [],
     "ask": []

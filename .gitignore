@@ -17,6 +17,7 @@ ENV/
 # Data files (we'll sync these via automation)
 *.xlsx
 *.csv
+*.parquet
 
 # Allow the master data file for GitHub sync
 !retail_data.xlsx
@@ -33,3 +34,11 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Credentials (NEVER commit these)
+credentials/
+*.json
+!package.json
+service-account*.json
+*-credentials.json
+*-key.json
