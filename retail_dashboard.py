@@ -1193,7 +1193,7 @@ Example: result = df.groupby('product_name').agg({'purchase_price_w_discount': '
                     for chart in st.session_state.claude_charts:
                         try:
                             fig = pio.from_json(chart['fig_json'])
-                            st.plotly_chart(fig, use_container_width=True, key=f"chart_{chart['id']}")
+                            st.plotly_chart(fig, key=f"chart_{chart['id']}")
                         except Exception as chart_err:
                             st.error(f"Error rendering chart {chart['id']}: {chart_err}")
 
