@@ -699,14 +699,6 @@ def main() -> None:
             if "chat_history" not in st.session_state:
                 st.session_state.chat_history = []
 
-            # Initialize session state for Claude-generated charts
-            if "claude_charts" not in st.session_state:
-                st.session_state.claude_charts = []
-
-            # Initialize session state for Claude-generated CSV exports
-            if "claude_exports" not in st.session_state:
-                st.session_state.claude_exports = []
-
             # API key configuration
             api_key = None
             try:
@@ -753,90 +745,6 @@ def main() -> None:
                         return "Code executed but no 'result' variable was set."
                     except Exception as e:
                         return f"Error executing code: {str(e)}"
-
-                def execute_chart_code(code: str, df: pd.DataFrame, checkins_df: pd.DataFrame, inventory_df: pd.DataFrame) -> dict:
-                    """Execute code that creates a Plotly chart and store it."""
-                    import json
-                    import uuid
-                    try:
-                        namespace = {
-                            'df': df.copy(),
-                            'checkins_df': checkins_df.copy(),
-                            'inventory_df': inventory_df.copy() if not inventory_df.empty else pd.DataFrame(),
-                            'pd': pd,
-                            'np': np,
-                            'px': px,
-                        }
-                        exec(code, namespace)
-                        if 'fig' in namespace:
-                            fig = namespace['fig']
-                            chart_id = str(uuid.uuid4())[:8]
-                            # Store chart as JSON for later rendering
-                            st.session_state.claude_charts.append({
-                                'id': chart_id,
-                                'fig_json': fig.to_json(),
-                                'title': fig.layout.title.text if fig.layout.title and fig.layout.title.text else 'Chart'
-                            })
-                            return {'success': True, 'chart_id': chart_id, 'message': f"Chart created successfully (ID: {chart_id})"}
-                        return {'success': False, 'error': "Code executed but no 'fig' variable was created."}
-                    except Exception as e:
-                        return {'success': False, 'error': f"Error creating chart: {str(e)}"}
-
-                def create_csv_export(code: str, filename: str, description: str, df: pd.DataFrame, checkins_df: pd.DataFrame, inventory_df: pd.DataFrame) -> dict:
-                    """Execute code and export the result DataFrame as CSV."""
-                    import uuid
-                    try:
-                        namespace = {
-                            'df': df.copy(),
-                            'checkins_df': checkins_df.copy(),
-                            'inventory_df': inventory_df.copy() if not inventory_df.empty else pd.DataFrame(),
-                            'pd': pd,
-                            'np': np,
-                        }
-                        exec(code, namespace)
-                        if 'result' in namespace:
-                            result = namespace['result']
-                            if isinstance(result, pd.DataFrame):
-                                export_id = str(uuid.uuid4())[:8]
-                                csv_data = result.to_csv(index=False)
-                                st.session_state.claude_exports.append({
-                                    'id': export_id,
-                                    'filename': filename,
-                                    'description': description,
-                                    'csv_data': csv_data,
-                                    'row_count': len(result),
-                                    'columns': list(result.columns)
-                                })
-                                return {
-                                    'success': True,
-                                    'export_id': export_id,
-                                    'row_count': len(result),
-                                    'columns': list(result.columns),
-                                    'message': f"CSV export created: {filename}.csv ({len(result)} rows, {len(result.columns)} columns)"
-                                }
-                            elif isinstance(result, pd.Series):
-                                export_id = str(uuid.uuid4())[:8]
-                                csv_data = result.to_frame().to_csv(index=True)
-                                st.session_state.claude_exports.append({
-                                    'id': export_id,
-                                    'filename': filename,
-                                    'description': description,
-                                    'csv_data': csv_data,
-                                    'row_count': len(result),
-                                    'columns': [result.name or 'value']
-                                })
-                                return {
-                                    'success': True,
-                                    'export_id': export_id,
-                                    'row_count': len(result),
-                                    'columns': [result.name or 'value'],
-                                    'message': f"CSV export created: {filename}.csv ({len(result)} rows)"
-                                }
-                            else:
-                                return {'success': False, 'error': "'result' must be a DataFrame or Series"}
-                        return {'success': False, 'error': "Code executed but no 'result' variable was set."}
-                    except Exception as e:
-                        return {'success': False, 'error': f"Error creating export: {str(e)}"}
 
                 # Generate data context for Claude
                 def generate_data_context_top(df: pd.DataFrame, checkins_df: pd.DataFrame, inventory_df: pd.DataFrame) -> str:
@@ -1036,58 +944,6 @@ Store your result in a variable called 'result'.""",
                             },
                             "required": ["code"]
                         }
-                    },
-                    {
-                        "name": "create_chart",
-                        "description": """Create a Plotly chart to visualize data. Your code must create a 'fig' variable using plotly.express (available as 'px').
-
-Available chart types: px.bar, px.line, px.scatter, px.pie, px.histogram, px.area, px.box
-
-You have access to the same DataFrames as query_data:
-- 'df' - Purchases data
-- 'checkins_df' - Check-ins data
-- 'inventory_df' - Inventory data
-
-Example: fig = px.bar(df.groupby('purchase_location')['purchase_price_w_discount'].sum().reset_index(), x='purchase_location', y='purchase_price_w_discount', title='Sales by Location')""",
-                        "input_schema": {
-                            "type": "object",
-                            "properties": {
-                                "code": {
-                                    "type": "string",
-                                    "description": "Python code that creates a Plotly figure stored in 'fig' variable"
-                                }
-                            },
-                            "required": ["code"]
-                        }
-                    },
-                    {
-                        "name": "export_csv",
-                        "description": """Export query results to a downloadable CSV file. Execute pandas code and store the result in a 'result' variable (DataFrame or Series).
-
-You have access to the same DataFrames as query_data:
-- 'df' - Purchases data
-- 'checkins_df' - Check-ins data
-- 'inventory_df' - Inventory data
-
-Example: result = df.groupby('product_name').agg({'purchase_price_w_discount': 'sum', 'quantity': 'sum'}).sort_values('purchase_price_w_discount', ascending=False).head(50)""",
-                        "input_schema": {
-                            "type": "object",
-                            "properties": {
-                                "code": {
-                                    "type": "string",
-                                    "description": "Python pandas code that stores the result in a 'result' variable"
-                                },
-                                "filename": {
-                                    "type": "string",
-                                    "description": "Name for the CSV file (without .csv extension)"
-                                },
-                                "description": {
-                                    "type": "string",
-                                    "description": "Brief description of what this export contains"
-                                }
-                            },
-                            "required": ["code", "filename", "description"]
-                        }
                     }
                 ]
 
@@ -1179,45 +1035,8 @@ Example: result = df.groupby('product_name').agg({'purchase_price_w_discount': '
                             else:
                                 with st.chat_message("assistant"):
                                     st.write(msg['content'])
-                                    # Display thinking blocks in an expander if present
-                                    if "thinking" in msg and msg["thinking"]:
-                                        with st.expander("View Claude's reasoning process"):
-                                            st.markdown(msg["thinking"])
                     else:
-                        st.caption("Ask me anything about your retail data. I can query, create charts, and export data.")
-
-                # Display any Claude-generated charts
-                if st.session_state.claude_charts:
-                    st.markdown("#### Generated Charts")
-                    import plotly.io as pio
-                    for chart in st.session_state.claude_charts:
-                        try:
-                            fig = pio.from_json(chart['fig_json'])
-                            st.plotly_chart(fig, key=f"chart_{chart['id']}")
-                        except Exception as chart_err:
-                            st.error(f"Error rendering chart {chart['id']}: {chart_err}")
-
-                # Display download buttons for CSV exports
-                if st.session_state.claude_exports:
-                    st.markdown("#### Data Exports")
-                    export_cols = st.columns(min(len(st.session_state.claude_exports), 3))
-                    for idx, export in enumerate(st.session_state.claude_exports):
-                        with export_cols[idx % 3]:
-                            st.download_button(
-                                label=f"{export['filename']}.csv ({export['row_count']} rows)",
-                                data=export['csv_data'],
-                                file_name=f"{export['filename']}.csv",
-                                mime="text/csv",
-                                key=f"export_{export['id']}",
-                                help=export['description']
-                            )
-
-                # Extended thinking toggle
-                enable_thinking = st.checkbox(
-                    "Deep Analysis Mode",
-                    value=False,
-                    help="Enable extended thinking for complex questions (uses more tokens but provides deeper analysis)"
-                )
+                        st.caption("Ask me anything about your retail data. I can query the full dataset.")
 
                 # Chat input at the bottom
                 user_question = st.chat_input(
@@ -1232,28 +1051,6 @@ Example: result = df.groupby('product_name').agg({'purchase_price_w_discount': '
                     try:
                         client = anthropic.Anthropic(api_key=api_key)
 
-                        # Generate KPI context for goal tracking
-                        def generate_kpi_context():
-                            """Generate KPI goal tracking context."""
-                            KPI_BASELINE = 279879  # S1 2025 baseline
-                            KPI_TARGET = 307866   # S1 2026 target (10% growth)
-
-                            # Calculate current S1 2026 progress if data is available
-                            kpi_context = f"""
-KPI GOAL TRACKING:
-- Target: ${KPI_TARGET:,} Adjusted Gross Profit (S1 2026)
-- Baseline: ${KPI_BASELINE:,} (S1 2025)
-- Growth Target: 10% increase over baseline
-
-KEY INSIGHT: When analyzing data or answering questions, always consider how findings relate to the 10% AGP growth goal. Identify:
-- Opportunities to increase revenue
-- Areas where margins can be improved
-- Risks to achieving the target
-- Recommendations that support goal attainment"""
-                            return kpi_context
-
-                        kpi_context = generate_kpi_context()
-
                         # Build system message with data context
                         inv_rows = len(inventory_df) if not inventory_df.empty else 0
                         system_message = f"""You are a retail data analyst with FULL ACCESS to query the actual data using pandas.
@@ -1261,50 +1058,28 @@ KEY INSIGHT: When analyzing data or answering questions, always consider how fin
 DATA SUMMARY:
 {data_context}
 
-{kpi_context}
-
-AVAILABLE TOOLS:
-1. query_data - Execute pandas code to analyze data. Store results in 'result' variable.
-2. create_chart - Create Plotly visualizations. Store figure in 'fig' variable using px (plotly.express).
-3. export_csv - Export data to downloadable CSV. Store DataFrame in 'result' variable.
-
-DATA ACCESS:
+You have access to the query_data tool which lets you execute ANY pandas code against the real data.
 - 'df' = purchases data ({len(df):,} rows)
 - 'checkins_df' = check-ins data ({len(checkins_df):,} rows)
 - 'inventory_df' = inventory/stock data ({inv_rows:,} rows)
 
-GUIDELINES:
-- ALWAYS use tools to get exact numbers. Don't guess or estimate - query the data!
-- When visualizing, use create_chart to generate interactive Plotly charts
-- When asked to export or download data, use export_csv
-- Connect insights to the AGP growth goal when relevant
-- Be thorough in your analysis."""
+ALWAYS use the query_data tool to get exact numbers. Don't guess or estimate - query the data!
+Store results in a 'result' variable. Be thorough in your analysis."""
 
                         # Build messages
                         messages = []
                         for msg in st.session_state.chat_history:
                             messages.append({"role": msg["role"], "content": msg["content"]})
 
-                        spinner_text = "Deep analysis in progress..." if enable_thinking else "Analyzing data..."
-                        with st.spinner(spinner_text):
-                            # Build API parameters
-                            api_params = {
-                                "model": "claude-sonnet-4-5-20250929",
-                                "max_tokens": 16000 if enable_thinking else 4000,
-                                "system": system_message,
-                                "tools": tools,
-                                "messages": messages
-                            }
-
-                            # Add extended thinking if enabled
-                            if enable_thinking:
-                                api_params["thinking"] = {
-                                    "type": "enabled",
-                                    "budget_tokens": 10000
-                                }
-
+                        with st.spinner("Analyzing data..."):
                             # Initial API call
-                            response = client.messages.create(**api_params)
+                            response = client.messages.create(
+                                model="claude-sonnet-4-5-20250929",
+                                max_tokens=4000,
+                                system=system_message,
+                                tools=tools,
+                                messages=messages
+                            )
 
                             # Process tool calls in a loop
                             while response.stop_reason == "tool_use":
@@ -1326,61 +1101,27 @@ GUIDELINES:
                                                 "tool_use_id": block.id,
                                                 "content": query_result
                                             })
-                                        elif tool_name == "create_chart":
-                                            # Execute chart creation code
-                                            code = tool_input.get("code", "")
-                                            chart_result = execute_chart_code(code, df, checkins_df, inventory_df)
-                                            tool_results.append({
-                                                "type": "tool_result",
-                                                "tool_use_id": block.id,
-                                                "content": str(chart_result)
-                                            })
-                                        elif tool_name == "export_csv":
-                                            # Execute CSV export code
-                                            code = tool_input.get("code", "")
-                                            filename = tool_input.get("filename", "export")
-                                            description = tool_input.get("description", "Data export")
-                                            export_result = create_csv_export(code, filename, description, df, checkins_df, inventory_df)
-                                            tool_results.append({
-                                                "type": "tool_result",
-                                                "tool_use_id": block.id,
-                                                "content": str(export_result)
-                                            })
 
                                 # Add assistant message and tool results to conversation
                                 messages.append({"role": "assistant", "content": assistant_content})
                                 messages.append({"role": "user", "content": tool_results})
 
                                 # Continue the conversation
-                                continuation_params = {
-                                    "model": "claude-sonnet-4-5-20250929",
-                                    "max_tokens": 16000 if enable_thinking else 4000,
-                                    "system": system_message,
-                                    "tools": tools,
-                                    "messages": messages
-                                }
-                                if enable_thinking:
-                                    continuation_params["thinking"] = {
-                                        "type": "enabled",
-                                        "budget_tokens": 10000
-                                    }
-                                response = client.messages.create(**continuation_params)
+                                response = client.messages.create(
+                                    model="claude-sonnet-4-5-20250929",
+                                    max_tokens=4000,
+                                    system=system_message,
+                                    tools=tools,
+                                    messages=messages
+                                )
 
-                            # Extract final text response and thinking blocks
+                            # Extract final text response
                             final_response = ""
-                            thinking_content = ""
                             for block in response.content:
                                 if hasattr(block, "text"):
                                     final_response += block.text
-                                elif hasattr(block, "thinking"):
-                                    thinking_content += block.thinking
 
-                            # Store thinking content separately if present
-                            message_data = {"role": "assistant", "content": final_response}
-                            if thinking_content and enable_thinking:
-                                message_data["thinking"] = thinking_content
-
-                            st.session_state.chat_history.append(message_data)
+                            st.session_state.chat_history.append({"role": "assistant", "content": final_response})
                             st.rerun()  # Refresh to show new message
 
                     except Exception as e:
