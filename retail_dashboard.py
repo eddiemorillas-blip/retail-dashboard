@@ -692,9 +692,32 @@ def main() -> None:
             location_col = col
             break
 
-    # Claude AI Assistant (at top for easy access)
+    # Claude AI Assistant - Modal Popup
     if ANTHROPIC_AVAILABLE:
-        with st.expander("🤖 Ask Claude About Your Data", expanded=False):
+        # Store data in session state for dialog access
+        st.session_state.claude_df = df
+        st.session_state.claude_checkins = checkins_df
+        st.session_state.claude_inventory = inventory_df
+        st.session_state.claude_total_sales = total_sales
+        st.session_state.claude_avg_basket = avg_basket
+        st.session_state.claude_total_bennies = total_bennies
+        st.session_state.claude_bennies_count = bennies_count
+        st.session_state.claude_date_col = date_col
+        st.session_state.claude_location_col = location_col
+
+        @st.dialog("Ask Claude About Your Data", width="large")
+        def claude_chat_dialog():
+            # Retrieve data from session state
+            df = st.session_state.claude_df
+            checkins_df = st.session_state.claude_checkins
+            inventory_df = st.session_state.claude_inventory
+            total_sales = st.session_state.claude_total_sales
+            avg_basket = st.session_state.claude_avg_basket
+            total_bennies = st.session_state.claude_total_bennies
+            bennies_count = st.session_state.claude_bennies_count
+            date_col = st.session_state.claude_date_col
+            location_col = st.session_state.claude_location_col
+
             # Initialize session state for chat history
             if "chat_history" not in st.session_state:
                 st.session_state.chat_history = []
@@ -1365,9 +1388,15 @@ ALWAYS use tools to get exact numbers - don't guess! Be thorough in your analysi
 
             else:
                 st.info("Enter your Anthropic API key above to chat with Claude")
+
+        # Button to open the Claude dialog
+        if st.button("🤖 Ask Claude About Your Data", type="primary", use_container_width=False):
+            claude_chat_dialog()
+
     else:
-        with st.expander("🤖 Claude AI Assistant"):
-            st.info("Install `anthropic` package: `pip install anthropic`")
+        if st.button("🤖 Claude AI Assistant (Not Available)", disabled=True):
+            pass
+        st.caption("Install `anthropic` package: `pip install anthropic`")
 
     # ===========================================
     # ADJUSTED GROSS PROFIT KPI TRACKING SECTION
