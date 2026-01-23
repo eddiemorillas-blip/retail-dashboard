@@ -705,6 +705,14 @@ def main() -> None:
         st.session_state.claude_date_col = date_col
         st.session_state.claude_location_col = location_col
 
+        # Check for API key in secrets BEFORE dialog (secrets may not work inside dialog)
+        if "claude_api_key" not in st.session_state:
+            try:
+                if "ANTHROPIC_API_KEY" in st.secrets:
+                    st.session_state.claude_api_key = st.secrets["ANTHROPIC_API_KEY"]
+            except Exception:
+                pass
+
         @st.dialog("Ask Claude About Your Data", width="large")
         def claude_chat_dialog():
             # Retrieve data from session state
@@ -730,17 +738,8 @@ def main() -> None:
             if "claude_exports" not in st.session_state:
                 st.session_state.claude_exports = []
 
-            # API key configuration - check secrets first, then session state
-            api_key = None
-            try:
-                if "ANTHROPIC_API_KEY" in st.secrets:
-                    api_key = st.secrets["ANTHROPIC_API_KEY"]
-            except Exception:
-                pass  # No secrets file exists
-
-            # Check session state for previously entered key
-            if not api_key and "claude_api_key" in st.session_state:
-                api_key = st.session_state.claude_api_key
+            # API key configuration - check session state (secrets loaded outside dialog)
+            api_key = st.session_state.get("claude_api_key", None)
 
             if not api_key:
                 api_key_input = st.text_input(
