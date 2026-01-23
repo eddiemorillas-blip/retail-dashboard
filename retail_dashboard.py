@@ -300,45 +300,28 @@ def main() -> None:
         st.sidebar.success("✅ Cache cleared! Reloading...")
         st.rerun()
 
-    # Data source selection - include BigQuery if available
-    # Check if local parquet files exist (fastest option)
-    parquet_purchases = Path(__file__).parent / "retail_purchases_proshop.parquet"
-    parquet_checkins = Path(__file__).parent / "checkins_daily_summary.parquet"
-    parquet_available = parquet_purchases.exists() and parquet_checkins.exists()
-
+    # Data source selection - BigQuery is default when configured
     data_source_options = ["Local File", "SharePoint"]
     default_index = 0
 
-    if parquet_available:
-        data_source_options.insert(0, "Local Parquet (Fast)")
-        default_index = 0  # Default to fast parquet files
-
+    # Check if BigQuery is available and configured
+    bq_configured = False
     if BIGQUERY_AVAILABLE:
-        data_source_options.append("BigQuery")
+        from bigquery_loader import BigQueryLoader
+        bq_loader = BigQueryLoader()
+        bq_configured = bq_loader.is_configured()
+        if bq_configured:
+            data_source_options.insert(0, "BigQuery")
+            default_index = 0  # Default to BigQuery when configured
+        else:
+            data_source_options.append("BigQuery")
 
     data_source = st.sidebar.radio(
         "Choose data source:",
         data_source_options,
         index=default_index,
-        help="Select whether to load data from a local file, SharePoint, or BigQuery"
+        help="Select data source - BigQuery recommended for live data"
     )
-
-    # Add "Refresh from BigQuery" button when BigQuery is available
-    if BIGQUERY_AVAILABLE:
-        from bigquery_loader import BigQueryLoader
-        bq_loader = BigQueryLoader()
-        if bq_loader.is_configured():
-            if st.sidebar.button("⬇️ Update Local Data from BigQuery", use_container_width=True,
-                                help="Fetch latest data from BigQuery and save to local parquet files"):
-                with st.sidebar:
-                    with st.spinner("Fetching data from BigQuery..."):
-                        success, message = bq_loader.save_to_parquet()
-                        if success:
-                            st.success(f"✅ {message}")
-                            st.cache_data.clear()
-                            st.rerun()
-                        else:
-                            st.error(f"❌ {message}")
 
     sharepoint_url = None
     bigquery_config = None
@@ -393,64 +376,57 @@ def main() -> None:
                     except Exception as e:
                         st.error(f"❌ Connection error: {str(e)}")
 
-    # Check for inventory parquet file
+    # Check for inventory parquet file (optional supplement to main data)
     parquet_inventory = Path(__file__).parent / "inventory_on_hand.parquet"
     inventory_available = parquet_inventory.exists()
 
-    # Load data (wrapped in cache)
+    # Load data based on selected source
     try:
-        if data_source == "Local Parquet (Fast)":
-            # Load from local parquet files (fastest option)
-            df = pd.read_parquet(parquet_purchases)
-            checkins_df = pd.read_parquet(parquet_checkins)
-
-            # Load inventory if available
-            if inventory_available:
-                inventory_df = pd.read_parquet(parquet_inventory)
-            else:
-                inventory_df = pd.DataFrame()
-
-            inv_msg = f" | Inventory: {len(inventory_df):,}" if not inventory_df.empty else ""
-            st.sidebar.success(f"✅ Purchases: {len(df):,} | Check-ins: {len(checkins_df):,}{inv_msg} rows")
-
-        elif data_source == "BigQuery" and bigquery_config:
-            # Load from BigQuery (both cached for 24 hours)
+        if data_source == "BigQuery" and bigquery_config:
+            # Load from BigQuery with progress indicator
             loader = bigquery_config["loader"]
             months_back = bigquery_config.get("months_back", 24)
 
-            with st.spinner("Loading data from BigQuery..."):
-                df, _ = loader.load_retail_data(
+            # Show loading progress in sidebar
+            progress_placeholder = st.sidebar.empty()
+            progress_placeholder.info("Loading purchases from BigQuery...")
+
+            df, _ = loader.load_retail_data(
+                dataset_id=bigquery_config["dataset_id"],
+                purchases_table=bigquery_config["purchases_table"],
+                months_back=months_back,
+                load_checkins=False
+            )
+
+            if bigquery_config.get("load_checkins", True):
+                progress_placeholder.info("Loading check-ins from BigQuery...")
+                checkins_df = loader.load_checkins(
                     dataset_id=bigquery_config["dataset_id"],
-                    purchases_table=bigquery_config["purchases_table"],
-                    months_back=months_back,
-                    load_checkins=False
+                    checkins_table=bigquery_config.get("checkins_table") or "check_ins_all",
+                    months_back=months_back
                 )
-
-                if bigquery_config.get("load_checkins", True):
-                    checkins_df = loader.load_checkins(
-                        dataset_id=bigquery_config["dataset_id"],
-                        checkins_table=bigquery_config.get("checkins_table") or "check_ins_all",
-                        months_back=months_back
-                    )
-                else:
-                    checkins_df = pd.DataFrame()
-
-            # Load inventory if available (local parquet)
-            if inventory_available:
-                inventory_df = pd.read_parquet(parquet_inventory)
             else:
-                inventory_df = pd.DataFrame()
+                checkins_df = pd.DataFrame()
 
+            # Load inventory if available (local parquet supplement)
+            inventory_df = pd.read_parquet(parquet_inventory) if inventory_available else pd.DataFrame()
+
+            # Show success with data counts
             inv_msg = f" | Inventory: {len(inventory_df):,}" if not inventory_df.empty else ""
-            st.sidebar.success(f"✅ Purchases: {len(df):,} | Check-ins: {len(checkins_df):,}{inv_msg} (cached 24hrs)")
+            progress_placeholder.success(f"✅ Purchases: {len(df):,} | Check-ins: {len(checkins_df):,}{inv_msg} (cached 24hrs)")
 
         elif data_source == "SharePoint" and sharepoint_url:
+            progress_placeholder = st.sidebar.empty()
+            progress_placeholder.info("Loading data from SharePoint...")
             df, checkins_df = load_data(sharepoint_url=sharepoint_url)
             inventory_df = pd.read_parquet(parquet_inventory) if inventory_available else pd.DataFrame()
-            st.sidebar.success("✅ Data loaded from SharePoint")
+            progress_placeholder.success("✅ Data loaded from SharePoint")
 
         else:
             # Load from local file
+            progress_placeholder = st.sidebar.empty()
+            progress_placeholder.info("Loading data from local file...")
+
             base = Path(__file__).parent
             master_file = base / "RETAIL.dataMart V2.xlsx"
             github_file = base / "retail_data.xlsx"
@@ -471,8 +447,8 @@ def main() -> None:
             if file_to_load:
                 from datetime import datetime
                 last_modified = datetime.fromtimestamp(file_mtime).strftime('%Y-%m-%d %H:%M:%S') if file_mtime else 'Unknown'
-                st.sidebar.info(f"📁 Data loaded from: {file_to_load.name}")
-                st.sidebar.caption(f"📅 File last modified: {last_modified}")
+                progress_placeholder.success(f"✅ Loaded from: {file_to_load.name}")
+                st.sidebar.caption(f"📅 Last modified: {last_modified}")
 
     except FileNotFoundError as e:
         st.error(f"❌ Data Loading Error: {str(e)}")
@@ -725,9 +701,13 @@ def main() -> None:
 
             # API key configuration
             api_key = None
-            if "ANTHROPIC_API_KEY" in st.secrets:
-                api_key = st.secrets["ANTHROPIC_API_KEY"]
-            else:
+            try:
+                if "ANTHROPIC_API_KEY" in st.secrets:
+                    api_key = st.secrets["ANTHROPIC_API_KEY"]
+            except Exception:
+                pass  # No secrets file exists
+
+            if not api_key:
                 api_key_input = st.text_input(
                     "Enter your Anthropic API key:",
                     type="password",
