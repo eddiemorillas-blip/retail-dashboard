@@ -730,7 +730,7 @@ def main() -> None:
             if "claude_exports" not in st.session_state:
                 st.session_state.claude_exports = []
 
-            # API key configuration
+            # API key configuration - check secrets first, then session state
             api_key = None
             try:
                 if "ANTHROPIC_API_KEY" in st.secrets:
@@ -738,15 +738,21 @@ def main() -> None:
             except Exception:
                 pass  # No secrets file exists
 
+            # Check session state for previously entered key
+            if not api_key and "claude_api_key" in st.session_state:
+                api_key = st.session_state.claude_api_key
+
             if not api_key:
                 api_key_input = st.text_input(
                     "Enter your Anthropic API key:",
                     type="password",
                     help="Get your API key from https://console.anthropic.com",
-                    key="claude_api_key_top"
+                    key="claude_api_key_input"
                 )
                 if api_key_input:
                     api_key = api_key_input
+                    st.session_state.claude_api_key = api_key_input  # Save for next time
+                    st.rerun()  # Refresh to show chat interface
                 st.caption("💡 Add to `.streamlit/secrets.toml`: `ANTHROPIC_API_KEY = \"your-key\"`")
 
             if api_key:
