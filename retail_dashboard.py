@@ -2158,8 +2158,9 @@ Be concise but insightful. Focus on actionable analysis."""
                                 st.session_state[f"claude_on_track_{selected_assess_month}"] = claude_answers.get("on_track", "")
                                 st.session_state[f"claude_next_actions_{selected_assess_month}"] = claude_answers.get("next_actions", "")
                                 st.session_state[f"claude_promotions_{selected_assess_month}"] = claude_answers.get("promotions", "")
+                                st.session_state[f"show_assessment_summary_{selected_assess_month}"] = True
 
-                                st.success("Claude has completed the assessment! Review and edit the responses below.")
+                                st.success("Claude has completed the assessment!")
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Error getting Claude's analysis: {str(e)}")
@@ -2282,7 +2283,11 @@ Be concise but insightful. Focus on actionable analysis."""
 
                 # ---- Export Assessment ----
                 st.markdown("---")
-                if st.button("Generate Assessment Summary", key="gen_assessment"):
+                show_summary = st.session_state.get(f"show_assessment_summary_{selected_assess_month}", False)
+                if st.button("Generate Assessment Summary", key="gen_assessment") or show_summary:
+                    # Clear the auto-show flag
+                    if show_summary:
+                        st.session_state[f"show_assessment_summary_{selected_assess_month}"] = False
                     # Build category changes text for export
                     cat_changes_text = ""
                     if 'revenue_subcategory' in df_kpi_no_bennies.columns and category_changes:
@@ -2295,17 +2300,31 @@ Be concise but insightful. Focus on actionable analysis."""
                     else:
                         cat_changes_text = "\nAll categories within normal range"
 
+                    # Build YoY section for export
+                    yoy_export_text = ""
+                    if has_yoy_data:
+                        yoy_export_text = f"""
+YEAR-OVER-YEAR (vs {yoy_period})
+--------------------------------
+Adjusted Gross Profit: ${yoy_agp:,.0f} → ${month_agp:,.0f} ({agp_yoy_change:+.1f}% YoY, ${month_agp - yoy_agp:+,.0f})
+Revenue: ${yoy_revenue:,.0f} → ${month_revenue:,.0f} ({rev_yoy_change:+.1f}% YoY)
+COGS: ${yoy_cogs:,.0f} → ${month_cogs:,.0f} ({cogs_yoy_change:+.1f}% YoY)
+Transactions: {yoy_txns:,} → {month_txns:,} ({txns_yoy_change:+.1f}% YoY)
+Bennies: ${yoy_bennies_val:,.0f} → ${month_bennies_val:,.0f} ({bennies_yoy_change:+.1f}% YoY)
+"""
+
                     assessment_text = f"""
 MONTHLY KPI ASSESSMENT - {selected_assess_month}
 {'='*50}
 
-1. KPI DATA
------------
+1. KPI DATA (MONTH-OVER-MONTH)
+------------------------------
 Adjusted Gross Profit: ${month_agp:,.0f} ({agp_mom_change:+.1f}% MoM, ${agp_diff:+,.0f})
 Revenue: ${month_revenue:,.0f} ({rev_mom_change:+.1f}% MoM, ${rev_diff:+,.0f})
 COGS: ${month_cogs:,.0f} ({cogs_mom_change:+.1f}% MoM, ${cogs_diff:+,.0f})
 Transactions: {month_txns:,} ({txns_mom_change:+.1f}% MoM, {txns_diff:+,})
 Bennies Used: ${month_bennies_val:,.0f} ({bennies_mom_change:+.1f}% MoM)
+{yoy_export_text}
 
 2. NOTABLE CHANGES/TRENDS
 -------------------------
