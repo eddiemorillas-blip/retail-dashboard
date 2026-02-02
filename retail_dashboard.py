@@ -1907,10 +1907,31 @@ ALWAYS use tools to get exact numbers - don't guess! Be thorough in your analysi
                 txns_mom_change = ((month_txns - prev_txns) / prev_txns * 100) if prev_txns != 0 else 0
                 bennies_mom_change = ((month_bennies_val - prev_bennies_val) / prev_bennies_val * 100) if prev_bennies_val != 0 else 0
 
+                # Get data for same month last year (YoY)
+                yoy_period = pd.Period(year=selected_period.year - 1, month=selected_period.month, freq='M')
+                yoy_data = df_kpi_no_bennies[df_kpi_no_bennies[date_col].dt.to_period('M') == yoy_period]
+                yoy_bennies = df_kpi_bennies[df_kpi_bennies[date_col].dt.to_period('M') == yoy_period] if not df_kpi_bennies.empty else pd.DataFrame()
+
+                # Calculate YoY metrics
+                yoy_revenue = yoy_data['purchase_price_w_discount'].sum() if not yoy_data.empty else 0
+                yoy_cogs = yoy_data[cost_col_kpi].sum() if not yoy_data.empty else 0
+                yoy_agp = yoy_revenue - yoy_cogs
+                yoy_txns = yoy_data['invoice_id'].nunique() if 'invoice_id' in yoy_data.columns and not yoy_data.empty else 0
+                yoy_bennies_val = abs(yoy_bennies['purchase_price_w_discount'].sum()) if not yoy_bennies.empty else 0
+
+                # Calculate YoY changes
+                agp_yoy_change = ((month_agp - yoy_agp) / yoy_agp * 100) if yoy_agp != 0 else 0
+                rev_yoy_change = ((month_revenue - yoy_revenue) / yoy_revenue * 100) if yoy_revenue != 0 else 0
+                cogs_yoy_change = ((month_cogs - yoy_cogs) / yoy_cogs * 100) if yoy_cogs != 0 else 0
+                txns_yoy_change = ((month_txns - yoy_txns) / yoy_txns * 100) if yoy_txns != 0 else 0
+                bennies_yoy_change = ((month_bennies_val - yoy_bennies_val) / yoy_bennies_val * 100) if yoy_bennies_val != 0 else 0
+                has_yoy_data = not yoy_data.empty
+
                 # ---- Q1: Showcase the relevant data/report for this KPI ----
                 st.markdown("---")
                 st.markdown(f"##### 1. KPI Data for {selected_assess_month}")
 
+                st.caption("Month-over-Month Comparison")
                 data_col1, data_col2, data_col3, data_col4, data_col5 = st.columns(5)
                 with data_col1:
                     st.metric("Adj. Gross Profit", f"${month_agp:,.0f}",
@@ -1932,6 +1953,33 @@ ALWAYS use tools to get exact numbers - don't guess! Be thorough in your analysi
                     st.metric("Bennies Used", f"${month_bennies_val:,.0f}",
                               delta=f"{bennies_mom_change:+.1f}% MoM",
                               delta_color="off")
+
+                # YoY Comparison
+                if has_yoy_data:
+                    st.caption(f"Year-over-Year Comparison (vs {yoy_period})")
+                    yoy_col1, yoy_col2, yoy_col3, yoy_col4, yoy_col5 = st.columns(5)
+                    with yoy_col1:
+                        st.metric("AGP YoY", f"${yoy_agp:,.0f}",
+                                  delta=f"{agp_yoy_change:+.1f}% YoY",
+                                  delta_color="normal" if agp_yoy_change >= 0 else "inverse")
+                    with yoy_col2:
+                        st.metric("Revenue YoY", f"${yoy_revenue:,.0f}",
+                                  delta=f"{rev_yoy_change:+.1f}% YoY",
+                                  delta_color="normal" if rev_yoy_change >= 0 else "inverse")
+                    with yoy_col3:
+                        st.metric("COGS YoY", f"${yoy_cogs:,.0f}",
+                                  delta=f"{cogs_yoy_change:+.1f}% YoY",
+                                  delta_color="inverse" if cogs_yoy_change >= 0 else "normal")
+                    with yoy_col4:
+                        st.metric("Txns YoY", f"{yoy_txns:,}",
+                                  delta=f"{txns_yoy_change:+.1f}% YoY",
+                                  delta_color="normal" if txns_yoy_change >= 0 else "inverse")
+                    with yoy_col5:
+                        st.metric("Bennies YoY", f"${yoy_bennies_val:,.0f}",
+                                  delta=f"{bennies_yoy_change:+.1f}% YoY",
+                                  delta_color="off")
+                else:
+                    st.caption(f"No YoY data available for {yoy_period}")
 
                 # ---- Q2: Notable changes or trends ----
                 st.markdown("---")
@@ -2044,15 +2092,29 @@ ALWAYS use tools to get exact numbers - don't guess! Be thorough in your analysi
                             if decreases:
                                 cat_context += "\nCategories DOWN >10%: " + ", ".join([f"{c['Category']} ({c['Change %']:.0f}%)" for c in decreases[:5]])
 
+                        # Build YoY context
+                        yoy_context = ""
+                        if has_yoy_data:
+                            yoy_context = f"""
+YEAR-OVER-YEAR COMPARISON (vs {yoy_period}):
+- AGP: ${yoy_agp:,.0f} last year → ${month_agp:,.0f} this year ({agp_yoy_change:+.1f}% YoY, ${month_agp - yoy_agp:+,.0f} change)
+- Revenue: ${yoy_revenue:,.0f} → ${month_revenue:,.0f} ({rev_yoy_change:+.1f}% YoY)
+- COGS: ${yoy_cogs:,.0f} → ${month_cogs:,.0f} ({cogs_yoy_change:+.1f}% YoY)
+- Transactions: {yoy_txns:,} → {month_txns:,} ({txns_yoy_change:+.1f}% YoY)
+- Bennies: ${yoy_bennies_val:,.0f} → ${month_bennies_val:,.0f} ({bennies_yoy_change:+.1f}% YoY)"""
+                        else:
+                            yoy_context = f"\nNo YoY data available for {yoy_period}"
+
                         assessment_prompt = f"""You are a retail business analyst completing a monthly KPI assessment for {selected_assess_month}.
 
-KPI DATA:
+KPI DATA (MONTH-OVER-MONTH):
 - Adjusted Gross Profit: ${month_agp:,.0f} ({agp_mom_change:+.1f}% MoM, ${month_agp - prev_agp:+,.0f} change)
 - Revenue: ${month_revenue:,.0f} ({rev_mom_change:+.1f}% MoM)
 - COGS: ${month_cogs:,.0f} ({cogs_mom_change:+.1f}% MoM)
 - Transactions: {month_txns:,} ({txns_mom_change:+.1f}% MoM)
 - Bennies Used: ${month_bennies_val:,.0f} ({bennies_mom_change:+.1f}% MoM)
 - Previous Month Bennies: ${prev_bennies_val:,.0f}
+{yoy_context}
 
 {cat_context}
 
@@ -2183,14 +2245,24 @@ Be concise but insightful. Focus on actionable analysis."""
 
                 # ---- Q7: Supporting metrics comparison ----
                 st.markdown("---")
-                st.markdown("##### 7. How do the supporting metrics compare to the previous month?")
+                st.markdown("##### 7. How do the supporting metrics compare to the previous month and last year?")
 
-                comparison_df = pd.DataFrame({
-                    'Metric': ['Revenue', 'COGS', 'Adj. Gross Profit', 'Transactions', 'Bennies Used'],
-                    selected_assess_month: [f"${month_revenue:,.0f}", f"${month_cogs:,.0f}", f"${month_agp:,.0f}", f"{month_txns:,}", f"${month_bennies_val:,.0f}"],
-                    str(prev_period): [f"${prev_revenue:,.0f}", f"${prev_cogs:,.0f}", f"${prev_agp:,.0f}", f"{prev_txns:,}", f"${prev_bennies_val:,.0f}"],
-                    'Change': [f"{rev_mom_change:+.1f}%", f"{cogs_mom_change:+.1f}%", f"{agp_mom_change:+.1f}%", f"{txns_mom_change:+.1f}%", f"{bennies_mom_change:+.1f}%"]
-                })
+                if has_yoy_data:
+                    comparison_df = pd.DataFrame({
+                        'Metric': ['Revenue', 'COGS', 'Adj. Gross Profit', 'Transactions', 'Bennies Used'],
+                        selected_assess_month: [f"${month_revenue:,.0f}", f"${month_cogs:,.0f}", f"${month_agp:,.0f}", f"{month_txns:,}", f"${month_bennies_val:,.0f}"],
+                        str(prev_period): [f"${prev_revenue:,.0f}", f"${prev_cogs:,.0f}", f"${prev_agp:,.0f}", f"{prev_txns:,}", f"${prev_bennies_val:,.0f}"],
+                        'MoM Change': [f"{rev_mom_change:+.1f}%", f"{cogs_mom_change:+.1f}%", f"{agp_mom_change:+.1f}%", f"{txns_mom_change:+.1f}%", f"{bennies_mom_change:+.1f}%"],
+                        str(yoy_period): [f"${yoy_revenue:,.0f}", f"${yoy_cogs:,.0f}", f"${yoy_agp:,.0f}", f"{yoy_txns:,}", f"${yoy_bennies_val:,.0f}"],
+                        'YoY Change': [f"{rev_yoy_change:+.1f}%", f"{cogs_yoy_change:+.1f}%", f"{agp_yoy_change:+.1f}%", f"{txns_yoy_change:+.1f}%", f"{bennies_yoy_change:+.1f}%"]
+                    })
+                else:
+                    comparison_df = pd.DataFrame({
+                        'Metric': ['Revenue', 'COGS', 'Adj. Gross Profit', 'Transactions', 'Bennies Used'],
+                        selected_assess_month: [f"${month_revenue:,.0f}", f"${month_cogs:,.0f}", f"${month_agp:,.0f}", f"{month_txns:,}", f"${month_bennies_val:,.0f}"],
+                        str(prev_period): [f"${prev_revenue:,.0f}", f"${prev_cogs:,.0f}", f"${prev_agp:,.0f}", f"{prev_txns:,}", f"${prev_bennies_val:,.0f}"],
+                        'MoM Change': [f"{rev_mom_change:+.1f}%", f"{cogs_mom_change:+.1f}%", f"{agp_mom_change:+.1f}%", f"{txns_mom_change:+.1f}%", f"{bennies_mom_change:+.1f}%"]
+                    })
                 st.dataframe(comparison_df, use_container_width=True, hide_index=True)
 
                 # ---- Q8: Retail credits (bennies) spent ----
