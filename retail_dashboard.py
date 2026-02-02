@@ -1869,6 +1869,11 @@ ALWAYS use tools to get exact numbers - don't guess! Be thorough in your analysi
                         index=0,
                         key="assess_month_select"
                     )
+                with assess_col2:
+                    if ANTHROPIC_AVAILABLE:
+                        claude_assess_btn = st.button("🤖 Ask Claude to Complete Assessment", key="claude_assess_btn")
+                    else:
+                        claude_assess_btn = False
 
                 # Get data for selected month and previous month
                 selected_period = pd.Period(selected_assess_month)
@@ -2023,8 +2028,91 @@ ALWAYS use tools to get exact numbers - don't guess! Be thorough in your analysi
                     else:
                         st.caption("All categories within normal range (within 10% MoM)")
 
+                # Claude Assessment Generation
+                if claude_assess_btn:
+                    api_key = st.session_state.get("claude_api_key", None)
+                    if not api_key:
+                        st.error("Please set your Anthropic API key first (click 'Ask Claude About Your Data' button above)")
+                    else:
+                        # Build category changes context
+                        cat_context = ""
+                        if 'category_changes' in dir() and category_changes:
+                            increases = [c for c in category_changes if c['Change %'] > 0]
+                            decreases = [c for c in category_changes if c['Change %'] < 0]
+                            if increases:
+                                cat_context += "Categories UP >10%: " + ", ".join([f"{c['Category']} (+{c['Change %']:.0f}%)" for c in increases[:5]])
+                            if decreases:
+                                cat_context += "\nCategories DOWN >10%: " + ", ".join([f"{c['Category']} ({c['Change %']:.0f}%)" for c in decreases[:5]])
+
+                        assessment_prompt = f"""You are a retail business analyst completing a monthly KPI assessment for {selected_assess_month}.
+
+KPI DATA:
+- Adjusted Gross Profit: ${month_agp:,.0f} ({agp_mom_change:+.1f}% MoM, ${month_agp - prev_agp:+,.0f} change)
+- Revenue: ${month_revenue:,.0f} ({rev_mom_change:+.1f}% MoM)
+- COGS: ${month_cogs:,.0f} ({cogs_mom_change:+.1f}% MoM)
+- Transactions: {month_txns:,} ({txns_mom_change:+.1f}% MoM)
+- Bennies Used: ${month_bennies_val:,.0f} ({bennies_mom_change:+.1f}% MoM)
+- Previous Month Bennies: ${prev_bennies_val:,.0f}
+
+{cat_context}
+
+KPI GOAL: Increase Adjusted Gross Profit from $279,879 (S1 2025 baseline) to $307,866 (S1 2026 target) = 10% growth
+
+Please provide responses for each of these assessment questions. Return ONLY a JSON object with these exact keys:
+{{
+    "trends": "Your analysis of notable changes or trends observed in the data",
+    "causes": "Your analysis of what likely caused these changes",
+    "actions_effect": "Assessment of whether previous actions are having the desired effect (be general since you don't know specific past actions)",
+    "on_track": "Analysis of progress toward the KPI goal based on the numbers",
+    "next_actions": "Recommended actions to continue progress toward the KPI",
+    "promotions": "Note about any promotions/sales (indicate you'd need more info from the user about specific promotions)"
+}}
+
+Be concise but insightful. Focus on actionable analysis."""
+
+                        with st.spinner("Claude is analyzing the data..."):
+                            try:
+                                client = anthropic.Anthropic(api_key=api_key)
+                                response = client.messages.create(
+                                    model="claude-sonnet-4-5-20250929",
+                                    max_tokens=2000,
+                                    messages=[{"role": "user", "content": assessment_prompt}]
+                                )
+
+                                import json
+                                response_text = response.content[0].text
+                                # Extract JSON from response
+                                if "```json" in response_text:
+                                    response_text = response_text.split("```json")[1].split("```")[0]
+                                elif "```" in response_text:
+                                    response_text = response_text.split("```")[1].split("```")[0]
+
+                                claude_answers = json.loads(response_text.strip())
+
+                                # Store in session state
+                                st.session_state[f"claude_trends_{selected_assess_month}"] = claude_answers.get("trends", "")
+                                st.session_state[f"claude_causes_{selected_assess_month}"] = claude_answers.get("causes", "")
+                                st.session_state[f"claude_actions_effect_{selected_assess_month}"] = claude_answers.get("actions_effect", "")
+                                st.session_state[f"claude_on_track_{selected_assess_month}"] = claude_answers.get("on_track", "")
+                                st.session_state[f"claude_next_actions_{selected_assess_month}"] = claude_answers.get("next_actions", "")
+                                st.session_state[f"claude_promotions_{selected_assess_month}"] = claude_answers.get("promotions", "")
+
+                                st.success("Claude has completed the assessment! Review and edit the responses below.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error getting Claude's analysis: {str(e)}")
+
+                # Get Claude's answers if available
+                claude_trends = st.session_state.get(f"claude_trends_{selected_assess_month}", "")
+                claude_causes = st.session_state.get(f"claude_causes_{selected_assess_month}", "")
+                claude_actions_effect = st.session_state.get(f"claude_actions_effect_{selected_assess_month}", "")
+                claude_on_track = st.session_state.get(f"claude_on_track_{selected_assess_month}", "")
+                claude_next_actions = st.session_state.get(f"claude_next_actions_{selected_assess_month}", "")
+                claude_promotions = st.session_state.get(f"claude_promotions_{selected_assess_month}", "")
+
                 trends_input = st.text_area(
                     "Additional observations on trends:",
+                    value=claude_trends,
                     key=f"trends_{selected_assess_month}",
                     placeholder="Describe any patterns you've noticed..."
                 )
@@ -2034,6 +2122,7 @@ ALWAYS use tools to get exact numbers - don't guess! Be thorough in your analysi
                 st.markdown("##### 3. What do you think caused them?")
                 causes_input = st.text_area(
                     "Root cause analysis:",
+                    value=claude_causes,
                     key=f"causes_{selected_assess_month}",
                     placeholder="What factors contributed to the changes observed?"
                 )
@@ -2043,6 +2132,7 @@ ALWAYS use tools to get exact numbers - don't guess! Be thorough in your analysi
                 st.markdown("##### 4. Have your previous actions affected your data in the way you hoped?")
                 actions_effect = st.text_area(
                     "Impact of previous actions:",
+                    value=claude_actions_effect,
                     key=f"actions_effect_{selected_assess_month}",
                     placeholder="Did the initiatives from last month produce expected results?"
                 )
@@ -2076,6 +2166,7 @@ ALWAYS use tools to get exact numbers - don't guess! Be thorough in your analysi
 
                 on_track_notes = st.text_area(
                     "Additional notes on progress:",
+                    value=claude_on_track,
                     key=f"on_track_{selected_assess_month}",
                     placeholder="Any context on your progress toward the goal?"
                 )
@@ -2085,6 +2176,7 @@ ALWAYS use tools to get exact numbers - don't guess! Be thorough in your analysi
                 st.markdown("##### 6. What actions will you take to continue making progress towards your KPI?")
                 next_actions = st.text_area(
                     "Planned actions for next month:",
+                    value=claude_next_actions,
                     key=f"next_actions_{selected_assess_month}",
                     placeholder="List specific initiatives or changes you'll implement..."
                 )
@@ -2111,6 +2203,7 @@ ALWAYS use tools to get exact numbers - don't guess! Be thorough in your analysi
                 st.markdown("##### 9. Did any sales or promotions take place during the prior month?")
                 promotions_input = st.text_area(
                     "Sales/promotions in the prior month:",
+                    value=claude_promotions,
                     key=f"promotions_{selected_assess_month}",
                     placeholder="List any sales events, promotions, or special offers that ran..."
                 )
