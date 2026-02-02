@@ -269,10 +269,7 @@ def check_password():
             st.session_state["password_correct"] = True
             st.rerun()
         else:
-            st.session_state["password_correct"] = False
-
-    if st.session_state.get("password_correct") == False:
-        st.error("😞 Password incorrect")
+            st.error("😞 Password incorrect")
 
     return False
 
