@@ -1895,6 +1895,22 @@ ALWAYS use tools to get exact numbers - don't guess! Be thorough in your analysi
                 month_txns = month_data['invoice_id'].nunique() if 'invoice_id' in month_data.columns else 0
                 month_bennies_val = abs(month_bennies['purchase_price_w_discount'].sum()) if not month_bennies.empty else 0
 
+                # Prepare check-ins data for calculations
+                checkins_temp = None
+                has_checkins_data = not checkins_df.empty and 'checkin_count' in checkins_df.columns and 'checkin_date' in checkins_df.columns
+                if has_checkins_data:
+                    checkins_temp = checkins_df.copy()
+                    checkins_temp['checkin_date'] = pd.to_datetime(checkins_temp['checkin_date'])
+
+                # Calculate check-ins for selected month
+                month_checkins = 0
+                if has_checkins_data:
+                    month_checkins_data = checkins_temp[checkins_temp['checkin_date'].dt.to_period('M') == selected_period]
+                    month_checkins = month_checkins_data['checkin_count'].sum() if not month_checkins_data.empty else 0
+
+                # Calculate $/Check-in for selected month
+                month_dpc = month_revenue / month_checkins if month_checkins > 0 else 0
+
                 # Calculate metrics for previous month
                 prev_revenue = prev_month_data['purchase_price_w_discount'].sum() if not prev_month_data.empty else 0
                 prev_cogs = prev_month_data[cost_col_kpi].sum() if not prev_month_data.empty else 0
@@ -1902,12 +1918,23 @@ ALWAYS use tools to get exact numbers - don't guess! Be thorough in your analysi
                 prev_txns = prev_month_data['invoice_id'].nunique() if 'invoice_id' in prev_month_data.columns else 0
                 prev_bennies_val = abs(prev_bennies['purchase_price_w_discount'].sum()) if not prev_bennies.empty else 0
 
+                # Calculate check-ins for previous month
+                prev_checkins = 0
+                if has_checkins_data:
+                    prev_checkins_data = checkins_temp[checkins_temp['checkin_date'].dt.to_period('M') == prev_period]
+                    prev_checkins = prev_checkins_data['checkin_count'].sum() if not prev_checkins_data.empty else 0
+
+                # Calculate $/Check-in for previous month
+                prev_dpc = prev_revenue / prev_checkins if prev_checkins > 0 else 0
+
                 # Calculate MoM changes
                 agp_mom_change = ((month_agp - prev_agp) / prev_agp * 100) if prev_agp != 0 else 0
                 rev_mom_change = ((month_revenue - prev_revenue) / prev_revenue * 100) if prev_revenue != 0 else 0
                 cogs_mom_change = ((month_cogs - prev_cogs) / prev_cogs * 100) if prev_cogs != 0 else 0
                 txns_mom_change = ((month_txns - prev_txns) / prev_txns * 100) if prev_txns != 0 else 0
                 bennies_mom_change = ((month_bennies_val - prev_bennies_val) / prev_bennies_val * 100) if prev_bennies_val != 0 else 0
+                checkins_mom_change = ((month_checkins - prev_checkins) / prev_checkins * 100) if prev_checkins != 0 else 0
+                dpc_mom_change = ((month_dpc - prev_dpc) / prev_dpc * 100) if prev_dpc != 0 else 0
 
                 # Get data for same month last year (YoY)
                 yoy_period = pd.Period(year=selected_period.year - 1, month=selected_period.month, freq='M')
@@ -1921,12 +1948,23 @@ ALWAYS use tools to get exact numbers - don't guess! Be thorough in your analysi
                 yoy_txns = yoy_data['invoice_id'].nunique() if 'invoice_id' in yoy_data.columns and not yoy_data.empty else 0
                 yoy_bennies_val = abs(yoy_bennies['purchase_price_w_discount'].sum()) if not yoy_bennies.empty else 0
 
+                # Calculate YoY check-ins
+                yoy_checkins = 0
+                if has_checkins_data:
+                    yoy_checkins_data = checkins_temp[checkins_temp['checkin_date'].dt.to_period('M') == yoy_period]
+                    yoy_checkins = yoy_checkins_data['checkin_count'].sum() if not yoy_checkins_data.empty else 0
+
+                # Calculate YoY $/Check-in
+                yoy_dpc = yoy_revenue / yoy_checkins if yoy_checkins > 0 else 0
+
                 # Calculate YoY changes
                 agp_yoy_change = ((month_agp - yoy_agp) / yoy_agp * 100) if yoy_agp != 0 else 0
                 rev_yoy_change = ((month_revenue - yoy_revenue) / yoy_revenue * 100) if yoy_revenue != 0 else 0
                 cogs_yoy_change = ((month_cogs - yoy_cogs) / yoy_cogs * 100) if yoy_cogs != 0 else 0
                 txns_yoy_change = ((month_txns - yoy_txns) / yoy_txns * 100) if yoy_txns != 0 else 0
                 bennies_yoy_change = ((month_bennies_val - yoy_bennies_val) / yoy_bennies_val * 100) if yoy_bennies_val != 0 else 0
+                checkins_yoy_change = ((month_checkins - yoy_checkins) / yoy_checkins * 100) if yoy_checkins != 0 else 0
+                dpc_yoy_change = ((month_dpc - yoy_dpc) / yoy_dpc * 100) if yoy_dpc != 0 else 0
                 has_yoy_data = not yoy_data.empty
 
                 # ---- Q1: Showcase the relevant data/report for this KPI ----
@@ -2288,18 +2326,6 @@ Be concise but insightful. Focus on actionable analysis."""
 
                 # Function to build assessment text
                 def build_assessment_text():
-                    # Build category changes text for export
-                    cat_changes_text = ""
-                    if 'revenue_subcategory' in df_kpi_no_bennies.columns and category_changes:
-                        increases_text = [f"  + {c['Category']}: +{c['Change %']:.0f}% (+${c['Change $']:,.0f})" for c in category_changes if c['Change %'] > 0]
-                        decreases_text = [f"  - {c['Category']}: {c['Change %']:.0f}% (${c['Change $']:,.0f})" for c in category_changes if c['Change %'] < 0]
-                        if increases_text:
-                            cat_changes_text += "\nCategories Up >10%:\n" + chr(10).join(increases_text[:5])
-                        if decreases_text:
-                            cat_changes_text += "\n\nCategories Down >10%:\n" + chr(10).join(decreases_text[:5])
-                    else:
-                        cat_changes_text = "\nAll categories within normal range"
-
                     # Build YoY section for export
                     yoy_export_text = ""
                     if has_yoy_data:
@@ -2313,11 +2339,12 @@ Transactions: {yoy_txns:,} → {month_txns:,} ({txns_yoy_change:+.1f}% YoY)
 Bennies: ${yoy_bennies_val:,.0f} → ${month_bennies_val:,.0f} ({bennies_yoy_change:+.1f}% YoY)
 """
 
-                    return f"""MONTHLY KPI ASSESSMENT - {selected_assess_month}
-{'='*50}
+                    return f"""[Assessment Date]
+{selected_assess_month}
 
-1. KPI DATA (MONTH-OVER-MONTH)
-------------------------------
+Showcase the relevant data/report for this KPI.
+
+MONTH-OVER-MONTH:
 Adjusted Gross Profit: ${month_agp:,.0f} ({agp_mom_change:+.1f}% MoM, ${agp_diff:+,.0f})
 Revenue: ${month_revenue:,.0f} ({rev_mom_change:+.1f}% MoM, ${rev_diff:+,.0f})
 COGS: ${month_cogs:,.0f} ({cogs_mom_change:+.1f}% MoM, ${cogs_diff:+,.0f})
@@ -2325,61 +2352,164 @@ Transactions: {month_txns:,} ({txns_mom_change:+.1f}% MoM, {txns_diff:+,})
 Bennies Used: ${month_bennies_val:,.0f} ({bennies_mom_change:+.1f}% MoM)
 {yoy_export_text}
 
-2. NOTABLE CHANGES/TRENDS
--------------------------
+Were there any notable changes or trends?
+
 {chr(10).join('- ' + c for c in notable_changes) if notable_changes else 'No major swings detected'}
-{cat_changes_text}
 
-{trends_input if trends_input else '(No additional observations)'}
+{trends_input if trends_input else ''}
 
-3. ROOT CAUSES
---------------
-{causes_input if causes_input else '(Not provided)'}
+What do you think caused them?
 
-4. PREVIOUS ACTIONS IMPACT
---------------------------
-{actions_effect if actions_effect else '(Not provided)'}
+{causes_input if causes_input else ''}
 
-5. ON TRACK STATUS
-------------------
-{on_track_notes if on_track_notes else '(Not provided)'}
+Have your previous actions affected your data in the way that you hoped?
 
-6. NEXT MONTH ACTIONS
----------------------
-{next_actions if next_actions else '(Not provided)'}
+{actions_effect if actions_effect else ''}
 
-7. SUPPORTING METRICS vs {prev_period}
---------------------------------------
+Are you on track to reach your KPI by the identified deadline?
+
+{on_track_notes if on_track_notes else ''}
+
+What actions will you take to continue making progress towards your KPI?
+
+{next_actions if next_actions else ''}
+
+How do the supporting metrics compare to the previous month?
+
 Revenue: ${month_revenue:,.0f} vs ${prev_revenue:,.0f} ({rev_mom_change:+.1f}%)
 COGS: ${month_cogs:,.0f} vs ${prev_cogs:,.0f} ({cogs_mom_change:+.1f}%)
+Bennies Used: ${month_bennies_val:,.0f} vs ${prev_bennies_val:,.0f} ({bennies_mom_change:+.1f}%)
 Transactions: {month_txns:,} vs {prev_txns:,} ({txns_mom_change:+.1f}%)
+$/Check-in: ${month_dpc:.2f} vs ${prev_dpc:.2f} ({dpc_mom_change:+.1f}%){"" if month_checkins == 0 else f" ({month_checkins:,} check-ins)"}
 
-8. BENNIES (Previous Month)
----------------------------
+What was the value of retail credits spent in the previous month?
+
 ${prev_bennies_val:,.0f}
 
-9. SALES/PROMOTIONS
--------------------
-{promotions_input if promotions_input else '(Not provided)'}
+Did any sales or promotions take place during the prior month?
+
+{promotions_input if promotions_input else ''}
 
 Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}"""
+
+                def build_assessment_html():
+                    # Build YoY section for HTML
+                    yoy_html = ""
+                    if has_yoy_data:
+                        yoy_html = f"""<br><br>YEAR-OVER-YEAR (vs {yoy_period}):<br>
+Adjusted Gross Profit: ${yoy_agp:,.0f} → ${month_agp:,.0f} ({agp_yoy_change:+.1f}% YoY, ${month_agp - yoy_agp:+,.0f})<br>
+Revenue: ${yoy_revenue:,.0f} → ${month_revenue:,.0f} ({rev_yoy_change:+.1f}% YoY)<br>
+COGS: ${yoy_cogs:,.0f} → ${month_cogs:,.0f} ({cogs_yoy_change:+.1f}% YoY)<br>
+Transactions: {yoy_txns:,} → {month_txns:,} ({txns_yoy_change:+.1f}% YoY)<br>
+Bennies: ${yoy_bennies_val:,.0f} → ${month_bennies_val:,.0f} ({bennies_yoy_change:+.1f}% YoY)"""
+
+                    # Notable changes for HTML
+                    notable_html = "<br>".join(f"- {c}" for c in notable_changes) if notable_changes else "No major swings detected"
+
+                    return f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {{
+            font-family: Calibri, sans-serif;
+            font-size: 11pt;
+            line-height: 1.4;
+        }}
+        .question {{
+            color: black;
+            font-weight: normal;
+            margin-top: 16px;
+            margin-bottom: 4px;
+        }}
+        .response {{
+            color: red;
+            margin-bottom: 12px;
+        }}
+        .header {{
+            color: black;
+            margin-bottom: 8px;
+        }}
+    </style>
+</head>
+<body>
+    <p class="question">[Assessment Date]</p>
+    <p class="response">{selected_assess_month}</p>
+
+    <p class="question">Showcase the relevant data/report for this KPI.</p>
+    <p class="response">
+        MONTH-OVER-MONTH:<br>
+        Adjusted Gross Profit: ${month_agp:,.0f} ({agp_mom_change:+.1f}% MoM, ${agp_diff:+,.0f})<br>
+        Revenue: ${month_revenue:,.0f} ({rev_mom_change:+.1f}% MoM, ${rev_diff:+,.0f})<br>
+        COGS: ${month_cogs:,.0f} ({cogs_mom_change:+.1f}% MoM, ${cogs_diff:+,.0f})<br>
+        Transactions: {month_txns:,} ({txns_mom_change:+.1f}% MoM, {txns_diff:+,})<br>
+        Bennies Used: ${month_bennies_val:,.0f} ({bennies_mom_change:+.1f}% MoM)
+        {yoy_html}
+    </p>
+
+    <p class="question">Were there any notable changes or trends?</p>
+    <p class="response">
+        {notable_html}
+        {"<br><br>" + trends_input if trends_input else ""}
+    </p>
+
+    <p class="question">What do you think caused them?</p>
+    <p class="response">{causes_input if causes_input else ""}</p>
+
+    <p class="question">Have your previous actions affected your data in the way that you hoped?</p>
+    <p class="response">{actions_effect if actions_effect else ""}</p>
+
+    <p class="question">Are you on track to reach your KPI by the identified deadline?</p>
+    <p class="response">{on_track_notes if on_track_notes else ""}</p>
+
+    <p class="question">What actions will you take to continue making progress towards your KPI?</p>
+    <p class="response">{next_actions if next_actions else ""}</p>
+
+    <p class="question">How do the supporting metrics compare to the previous month?</p>
+    <p class="response">
+        Revenue: ${month_revenue:,.0f} vs ${prev_revenue:,.0f} ({rev_mom_change:+.1f}%)<br>
+        COGS: ${month_cogs:,.0f} vs ${prev_cogs:,.0f} ({cogs_mom_change:+.1f}%)<br>
+        Bennies Used: ${month_bennies_val:,.0f} vs ${prev_bennies_val:,.0f} ({bennies_mom_change:+.1f}%)<br>
+        Transactions: {month_txns:,} vs {prev_txns:,} ({txns_mom_change:+.1f}%)<br>
+        $/Check-in: ${month_dpc:.2f} vs ${prev_dpc:.2f} ({dpc_mom_change:+.1f}%){"" if month_checkins == 0 else f" ({month_checkins:,} check-ins)"}
+    </p>
+
+    <p class="question">What was the value of retail credits spent in the previous month?</p>
+    <p class="response">${prev_bennies_val:,.0f}</p>
+
+    <p class="question">Did any sales or promotions take place during the prior month?</p>
+    <p class="response">{promotions_input if promotions_input else ""}</p>
+
+    <p style="color: gray; font-size: 9pt; margin-top: 20px;">Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}</p>
+</body>
+</html>"""
 
                 # Dialog for displaying assessment
                 @st.dialog("KPI Assessment Summary", width="large")
                 def show_assessment_dialog():
                     assessment_text = build_assessment_text()
-                    st.info("Select all text below (Ctrl+A / Cmd+A) and copy (Ctrl+C / Cmd+C) to paste into OneNote")
+                    assessment_html = build_assessment_html()
+                    st.info("Download the HTML file, open it in a browser, then copy and paste into OneNote to preserve formatting (questions in black, answers in red).")
                     st.code(assessment_text, language=None)
-                    col1, col2 = st.columns(2)
+                    col1, col2, col3 = st.columns(3)
                     with col1:
                         st.download_button(
-                            "Download as .txt",
+                            "Download HTML",
+                            assessment_html,
+                            file_name=f"kpi_assessment_{selected_assess_month}.html",
+                            mime="text/html",
+                            use_container_width=True,
+                            type="primary"
+                        )
+                    with col2:
+                        st.download_button(
+                            "Download .txt",
                             assessment_text,
                             file_name=f"kpi_assessment_{selected_assess_month}.txt",
                             mime="text/plain",
                             use_container_width=True
                         )
-                    with col2:
+                    with col3:
                         if st.button("Close", key="close_assessment_dialog", use_container_width=True):
                             st.session_state.show_assessment_dialog = False
                             st.rerun()
