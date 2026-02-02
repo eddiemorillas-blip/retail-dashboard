@@ -686,6 +686,10 @@ def main() -> None:
 
     # Claude AI Assistant - Modal Popup
     if ANTHROPIC_AVAILABLE:
+        # Initialize dialog open state
+        if "claude_dialog_open" not in st.session_state:
+            st.session_state.claude_dialog_open = False
+
         # Store data in session state for dialog access
         st.session_state.claude_df = df
         st.session_state.claude_checkins = checkins_df
@@ -707,6 +711,11 @@ def main() -> None:
 
         @st.dialog("Ask Claude About Your Data", width="large")
         def claude_chat_dialog():
+            # Close button at top right
+            if st.button("Close", key="close_claude_dialog"):
+                st.session_state.claude_dialog_open = False
+                st.rerun()
+
             # Retrieve data from session state
             df = st.session_state.claude_df
             checkins_df = st.session_state.claude_checkins
@@ -1388,6 +1397,10 @@ ALWAYS use tools to get exact numbers - don't guess! Be thorough in your analysi
 
         # Button to open the Claude dialog
         if st.button("🤖 Ask Claude About Your Data", type="primary", use_container_width=False):
+            st.session_state.claude_dialog_open = True
+
+        # Show dialog if open state is True
+        if st.session_state.claude_dialog_open:
             claude_chat_dialog()
 
     else:
