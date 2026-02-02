@@ -2283,11 +2283,9 @@ Be concise but insightful. Focus on actionable analysis."""
 
                 # ---- Export Assessment ----
                 st.markdown("---")
-                show_summary = st.session_state.get(f"show_assessment_summary_{selected_assess_month}", False)
-                if st.button("Generate Assessment Summary", key="gen_assessment") or show_summary:
-                    # Clear the auto-show flag
-                    if show_summary:
-                        st.session_state[f"show_assessment_summary_{selected_assess_month}"] = False
+
+                # Function to build assessment text
+                def build_assessment_text():
                     # Build category changes text for export
                     cat_changes_text = ""
                     if 'revenue_subcategory' in df_kpi_no_bennies.columns and category_changes:
@@ -2313,8 +2311,7 @@ Transactions: {yoy_txns:,} → {month_txns:,} ({txns_yoy_change:+.1f}% YoY)
 Bennies: ${yoy_bennies_val:,.0f} → ${month_bennies_val:,.0f} ({bennies_yoy_change:+.1f}% YoY)
 """
 
-                    assessment_text = f"""
-MONTHLY KPI ASSESSMENT - {selected_assess_month}
+                    return f"""MONTHLY KPI ASSESSMENT - {selected_assess_month}
 {'='*50}
 
 1. KPI DATA (MONTH-OVER-MONTH)
@@ -2363,15 +2360,43 @@ ${prev_bennies_val:,.0f}
 -------------------
 {promotions_input if promotions_input else '(Not provided)'}
 
-Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}
-"""
-                    st.text_area("Assessment Summary (copy or download):", assessment_text, height=400)
-                    st.download_button(
-                        "Download Assessment (.txt)",
-                        assessment_text,
-                        file_name=f"kpi_assessment_{selected_assess_month}.txt",
-                        mime="text/plain"
-                    )
+Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}"""
+
+                # Dialog for displaying assessment
+                @st.dialog("KPI Assessment Summary", width="large")
+                def show_assessment_dialog():
+                    assessment_text = build_assessment_text()
+                    st.info("Select all text below (Ctrl+A / Cmd+A) and copy (Ctrl+C / Cmd+C) to paste into OneNote")
+                    st.code(assessment_text, language=None)
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.download_button(
+                            "Download as .txt",
+                            assessment_text,
+                            file_name=f"kpi_assessment_{selected_assess_month}.txt",
+                            mime="text/plain",
+                            use_container_width=True
+                        )
+                    with col2:
+                        if st.button("Close", key="close_assessment_dialog", use_container_width=True):
+                            st.session_state.show_assessment_dialog = False
+                            st.rerun()
+
+                # Track dialog state
+                if "show_assessment_dialog" not in st.session_state:
+                    st.session_state.show_assessment_dialog = False
+
+                # Check if Claude just completed (auto-show)
+                show_summary = st.session_state.get(f"show_assessment_summary_{selected_assess_month}", False)
+                if show_summary:
+                    st.session_state[f"show_assessment_summary_{selected_assess_month}"] = False
+                    st.session_state.show_assessment_dialog = True
+
+                if st.button("View Assessment Summary", key="gen_assessment", type="primary"):
+                    st.session_state.show_assessment_dialog = True
+
+                if st.session_state.show_assessment_dialog:
+                    show_assessment_dialog()
 
     st.markdown("---")
 
