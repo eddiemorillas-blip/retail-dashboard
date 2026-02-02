@@ -1385,7 +1385,7 @@ ALWAYS use tools to get exact numbers - don't guess! Be thorough in your analysi
                                 message_data["thinking"] = thinking_content
 
                             st.session_state.chat_history.append(message_data)
-                            # Dialog will refresh automatically on next interaction
+                            st.rerun()  # Refresh to show response (dialog stays open via session state)
 
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
