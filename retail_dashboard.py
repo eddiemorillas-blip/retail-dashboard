@@ -262,10 +262,11 @@ def check_password():
     # Show input for password
     st.markdown("## 🔐 Access Required")
     st.markdown("Please enter the password to access the Retail Dashboard:")
-    password = st.text_input("Password", type="password", key="password")
+    st.text_input("Password", type="password", key="password_input")
 
     if st.button("Login", type="primary"):
-        if password == "L6xQ@J%S@rGP":  # Secure password
+        entered_password = st.session_state.get("password_input", "")
+        if entered_password == "L6xQ@J%S@rGP":  # Secure password
             st.session_state["password_correct"] = True
             st.rerun()
         else:
