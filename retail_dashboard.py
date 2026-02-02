@@ -255,16 +255,6 @@ def get_semester(date):
 def check_password():
     """Returns `True` if the user had the correct password."""
 
-    def password_entered():
-        """Checks whether a password entered by the user is correct."""
-        if "password" not in st.session_state:
-            return
-        if st.session_state["password"] == "L6xQ@J%S@rGP":  # Secure password
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]  # Don't store the password
-        else:
-            st.session_state["password_correct"] = False
-
     # Return True if the password is validated
     if st.session_state.get("password_correct", False):
         return True
@@ -272,11 +262,16 @@ def check_password():
     # Show input for password
     st.markdown("## 🔐 Access Required")
     st.markdown("Please enter the password to access the Retail Dashboard:")
-    st.text_input(
-        "Password", type="password", on_change=password_entered, key="password"
-    )
+    password = st.text_input("Password", type="password", key="password")
 
-    if "password_correct" in st.session_state:
+    if st.button("Login", type="primary"):
+        if password == "L6xQ@J%S@rGP":  # Secure password
+            st.session_state["password_correct"] = True
+            st.rerun()
+        else:
+            st.session_state["password_correct"] = False
+
+    if st.session_state.get("password_correct") == False:
         st.error("😞 Password incorrect")
 
     return False
@@ -1384,7 +1379,7 @@ ALWAYS use tools to get exact numbers - don't guess! Be thorough in your analysi
                                 message_data["thinking"] = thinking_content
 
                             st.session_state.chat_history.append(message_data)
-                            st.rerun()  # Refresh to show new message
+                            # Dialog will refresh automatically on next interaction
 
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
