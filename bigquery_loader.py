@@ -251,7 +251,7 @@ class BigQueryLoader:
             purchase_location
         FROM `{self._project_id}.{dataset_id}.{purchases_table}`
         WHERE DATE(purchase_date) >= DATE_SUB(CURRENT_DATE(), INTERVAL {months_back} MONTH)
-          AND disp_category = 'ProShop'
+          AND disp_category IN ('ProShop', 'Food')
         """
 
         if date_filter:
@@ -275,7 +275,7 @@ class BigQueryLoader:
             FROM `{self._project_id}.{dataset_id}.{purchases_table}`
             WHERE DATE(purchase_date) >= '{start_date}'
               AND DATE(purchase_date) <= '{end_date}'
-              AND disp_category = 'ProShop'
+              AND disp_category IN ('ProShop', 'Food')
             """
 
         purchases_query += " ORDER BY purchase_date DESC"
